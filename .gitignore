@@ -1,0 +1,42 @@
+# Entornos virtuales
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Bases de datos y datos locales (evita subir datos reales o de pruebas)
+*.db
+*.sqlite3
+data/
+pos.db
+provision.db
+
+# Carpetas de construcción / compilación de PyInstaller
+build/
+dist/
+*.spec
+
+# Archivos de pruebas
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Archivos PDF o temporales generados (tickets, etiquetas)
+*.pdf
+sku001.pdf
+
+# Carpetas de respaldos locales
+backups/
+
+# Archivos de configuración locales que pueden tener información sensible o específica de tu PC
+printer_config.json
+
+# Sistema operativo
+.DS_Store
+Thumbs.db

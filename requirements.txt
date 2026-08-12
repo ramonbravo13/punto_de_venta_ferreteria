@@ -1,0 +1,9 @@
+PyQt6
+Pillow
+pandas
+reportlab
+matplotlib
+pyinstaller
+pytest
+pytest-qt
+python-barcode
