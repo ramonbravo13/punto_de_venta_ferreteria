@@ -40,3 +40,6 @@ printer_config.json
 # Sistema operativo
 .DS_Store
 Thumbs.db
+
+# Reportes y archivos Excel generados
+*.xlsx

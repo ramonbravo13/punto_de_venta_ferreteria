@@ -37,7 +37,10 @@ class DatabaseManager:
                         current_stock INTEGER DEFAULT 0,
                         cost_price REAL NOT NULL,
                         selling_price REAL NOT NULL,
-                        tax_percentage REAL DEFAULT 0
+                        tax_percentage REAL DEFAULT 0,
+                        marca TEXT DEFAULT '',
+                        modelo TEXT DEFAULT '',
+                        voltaje TEXT DEFAULT ''
                     )
                 """)
 
@@ -49,11 +52,27 @@ class DatabaseManager:
                     )
                 """)
 
+                # Tabla de Brand Prefixes
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS brand_prefixes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        brand TEXT UNIQUE NOT NULL,
+                        prefix TEXT UNIQUE NOT NULL
+                    )
+                """)
+
                 # Insertar proveedores por defecto si no existen
                 cursor.execute("INSERT OR IGNORE INTO suppliers (name) VALUES ('Home Depot'), ('Lowe''s'), ('General')")
 
                 try:
                     cursor.execute("ALTER TABLE sales ADD COLUMN caja_id INTEGER")
+                except: pass
+                
+                try: cursor.execute("ALTER TABLE products ADD COLUMN marca TEXT DEFAULT ''")
+                except: pass
+                try: cursor.execute("ALTER TABLE products ADD COLUMN modelo TEXT DEFAULT ''")
+                except: pass
+                try: cursor.execute("ALTER TABLE products ADD COLUMN voltaje TEXT DEFAULT ''")
                 except: pass
                 
                 # Tabla de Clientes
@@ -513,63 +532,80 @@ class DatabaseManager:
             print(f"Error al obtener productos: {e}")
             return []
 
-    def add_product(self, sku, name, category, cost, price, min_stock, stock=0, description="", image_path=None, tax_percentage=0):
+    def add_product(self, sku, name, category, cost, price, min_stock, stock=0, description="", image_path=None, tax_percentage=0, marca="", modelo="", voltaje=""):
         """Inserta un nuevo producto en la base de datos."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO products (sku, name, category, cost_price, selling_price, min_stock, current_stock, description, image_path, tax_percentage)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (sku, name, category, cost, price, min_stock, stock, description, image_path, tax_percentage))
+                    INSERT INTO products (sku, name, category, cost_price, selling_price, min_stock, current_stock, description, image_path, tax_percentage, marca, modelo, voltaje)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (sku, name, category, cost, price, min_stock, stock, description, image_path, tax_percentage, marca, modelo, voltaje))
                 conn.commit()
                 return True
         except sqlite3.Error as e:
             print(f"Error al añadir producto: {e}")
             return False
 
-    def update_product(self, product_id, sku, name, category, cost, price, min_stock, stock, image_path=None, tax_percentage=0):
+    def update_product(self, product_id, sku, name, category, cost, price, min_stock, stock, image_path=None, tax_percentage=0, marca="", modelo="", voltaje=""):
         """Actualiza un producto existente en la base de datos."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE products 
-                    SET sku=?, name=?, category=?, cost_price=?, selling_price=?, min_stock=?, current_stock=?, image_path=?, tax_percentage=?
+                    SET sku=?, name=?, category=?, cost_price=?, selling_price=?, min_stock=?, current_stock=?, image_path=?, tax_percentage=?, marca=?, modelo=?, voltaje=?
                     WHERE id=?
-                """, (sku, name, category, cost, price, min_stock, stock, image_path, tax_percentage, product_id))
+                """, (sku, name, category, cost, price, min_stock, stock, image_path, tax_percentage, marca, modelo, voltaje, product_id))
                 conn.commit()
                 return True
         except sqlite3.Error as e:
             print(f"Error al actualizar producto: {e}")
             return False
 
+    def delete_product_completely(self, product_id):
+        """Elimina un producto y toda la información relacionada (compras, detalles de venta)."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Eliminar detalles de venta relacionados
+                cursor.execute("DELETE FROM sale_details WHERE product_id = ?", (product_id,))
+                # Eliminar compras relacionadas
+                cursor.execute("DELETE FROM purchases WHERE product_id = ?", (product_id,))
+                # Eliminar el producto
+                cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            print(f"Error al eliminar producto completamente: {e}")
+            return False
+
     def get_product_by_sku_or_name(self, query):
-        """Busca un producto por SKU (exacto/insensible) o nombre parcial."""
+        """Busca un producto por SKU (exacto/insensible) o nombre parcial, marca o modelo."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT id, name, cost_price, selling_price, sku 
                     FROM products 
-                    WHERE UPPER(sku) = UPPER(?) OR name LIKE ?
-                """, (query, f"%{query}%"))
+                    WHERE UPPER(sku) = UPPER(?) OR name LIKE ? OR marca LIKE ? OR modelo LIKE ?
+                """, (query, f"%{query}%", f"%{query}%", f"%{query}%"))
                 return cursor.fetchone()
         except sqlite3.Error as e:
             print(f"Error al buscar producto: {e}")
             return None
 
     def search_products(self, query, limit=15):
-        """Busca múltiples productos que coincidan parcialmente por SKU o nombre (para autocompletado)."""
+        """Busca múltiples productos que coincidan parcialmente por SKU, nombre, marca o modelo (para autocompletado)."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT sku, name, cost_price, tax_percentage, selling_price 
                     FROM products 
-                    WHERE sku LIKE ? OR name LIKE ?
+                    WHERE sku LIKE ? OR name LIKE ? OR marca LIKE ? OR modelo LIKE ?
                     LIMIT ?
-                """, (f"%{query}%", f"%{query}%", limit))
+                """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
                 return cursor.fetchall()
         except sqlite3.Error as e:
             print(f"Error al buscar productos: {e}")
@@ -728,9 +764,11 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # 1. Generar ticket
-                import datetime
-                ticket_number = f"TICK-{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+                # 1. Generar ticket más simple
+                cursor.execute("SELECT seq FROM sqlite_sequence WHERE name='sales'")
+                seq_row = cursor.fetchone()
+                next_id = (seq_row[0] + 1) if seq_row else 1
+                ticket_number = f"TK-{next_id:06d}"
                 
                 # 2. Insertar venta principal
                 cursor.execute("""
@@ -834,6 +872,7 @@ class DatabaseManager:
             return []
 
     def add_category(self, name):
+        """Añade una nueva categoría."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -843,6 +882,67 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"Error al añadir categoría: {e}")
             return False
+
+    def get_all_brand_prefixes(self):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, brand, prefix FROM brand_prefixes ORDER BY brand")
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Error al obtener prefijos: {e}")
+            return []
+
+    def add_brand_prefix(self, brand, prefix):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO brand_prefixes (brand, prefix) VALUES (?, ?)", (brand.strip().upper(), prefix.strip().upper()))
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            print(f"Error al añadir prefijo de marca: {e}")
+            return False
+
+    def delete_brand_prefix(self, prefix_id):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM brand_prefixes WHERE id = ?", (prefix_id,))
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            return False
+
+    def get_prefix_for_brand(self, brand):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT prefix FROM brand_prefixes WHERE UPPER(brand) = UPPER(?)", (brand.strip(),))
+                result = cursor.fetchone()
+                return result[0] if result else None
+        except sqlite3.Error as e:
+            return None
+
+    def get_next_sku_sequence(self, prefix):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT sku FROM products WHERE UPPER(sku) LIKE ?", (f"{prefix.upper()}%",))
+                results = cursor.fetchall()
+                max_seq = 0
+                for row in results:
+                    sku = row[0]
+                    if sku.upper().startswith(prefix.upper()):
+                        num_part = sku[len(prefix):]
+                        if num_part.isdigit():
+                            max_seq = max(max_seq, int(num_part))
+                
+                next_seq = max_seq + 1
+                return f"{prefix.upper()}{next_seq:07d}"
+        except sqlite3.Error as e:
+            print(f"Error calculando secuencia de SKU: {e}")
+            return f"{prefix.upper()}0000001"
 
     def delete_category(self, category_id):
         try:
@@ -963,14 +1063,105 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT date, ticket_number, total_amount, payment_method 
-                    FROM sales 
-                    WHERE caja_id = ? 
-                    ORDER BY date DESC
+                    SELECT s.date, s.ticket_number, IFNULL(c.name, 'Mostrador'), s.discount_applied, s.payment_method, s.total_amount 
+                    FROM sales s
+                    LEFT JOIN customers c ON s.customer_id = c.id
+                    WHERE s.caja_id = ? 
+                    ORDER BY s.date DESC
                 """, (caja_id,))
                 return cursor.fetchall()
         except sqlite3.Error as e:
             print(f"Error al obtener ventas de caja: {e}")
+            return []
+
+    def get_sale_details_by_ticket(self, ticket_number):
+        """Obtiene los detalles de los productos de un ticket específico."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT p.sku, p.name, sd.quantity, sd.price_at_sale
+                    FROM sale_details sd
+                    JOIN sales s ON sd.sale_id = s.id
+                    JOIN products p ON sd.product_id = p.id
+                    WHERE s.ticket_number = ?
+                """, (ticket_number,))
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Error al obtener detalles del ticket: {e}")
+            return []
+
+    def get_full_ticket_data(self, ticket_number):
+        """Retorna todos los datos de un ticket (cabecera y detalles) para impresión."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Obtener cabecera
+                cursor.execute("""
+                    SELECT s.ticket_number, s.date, s.total_amount, s.payment_method, 
+                           s.discount_applied, IFNULL(c.name, 'Mostrador')
+                    FROM sales s
+                    LEFT JOIN customers c ON s.customer_id = c.id
+                    WHERE s.ticket_number = ?
+                """, (ticket_number,))
+                header = cursor.fetchone()
+                
+                if not header:
+                    return None
+                    
+                # Obtener detalles
+                cursor.execute("""
+                    SELECT p.name, sd.quantity, sd.price_at_sale, (sd.quantity * sd.price_at_sale) as importe
+                    FROM sale_details sd
+                    JOIN sales s ON sd.sale_id = s.id
+                    JOIN products p ON sd.product_id = p.id
+                    WHERE s.ticket_number = ?
+                """, (ticket_number,))
+                details = cursor.fetchall()
+                
+                return {
+                    "ticket": header[0],
+                    "fecha": header[1],
+                    "total": header[2],
+                    "metodo_pago": header[3],
+                    "descuento": header[4],
+                    "cliente": header[5],
+                    "items": details
+                }
+        except sqlite3.Error as e:
+            print(f"Error al obtener data completa del ticket: {e}")
+            return None
+
+    def get_daily_sales_summary(self, filter_type='all'):
+        """Obtiene un resumen de ventas agrupado por día, con filtro opcional."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT 
+                        date(date) as day, 
+                        COUNT(id) as total_tickets,
+                        SUM(CASE WHEN payment_method='Efectivo' THEN total_amount ELSE 0 END) as efectivo,
+                        SUM(CASE WHEN payment_method='Tarjeta' THEN total_amount ELSE 0 END) as tarjeta,
+                        SUM(total_amount) as total
+                    FROM sales 
+                """
+                
+                params = []
+                if filter_type == 'week':
+                    query += " WHERE date >= date('now', '-7 days')"
+                elif filter_type == 'month':
+                    query += " WHERE date >= date('now', '-1 month')"
+                elif filter_type == 'today':
+                    query += " WHERE date(date) = date('now', 'localtime')"
+                    
+                query += " GROUP BY day ORDER BY day DESC"
+                
+                cursor.execute(query, params)
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Error al obtener resumen de ventas diario: {e}")
             return []
 
     def get_caja_history(self):

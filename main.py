@@ -18,6 +18,16 @@ import ui_components as ui
 from database import DatabaseManager
 from logic import BusinessLogic, MplCanvas
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 US_STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", 
     "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", 
@@ -30,7 +40,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Rios Tools")
-        self.setWindowIcon(QIcon("logo.jpg"))
+        self.setWindowIcon(QIcon(resource_path("logo.jpg")))
         self.resize(1024, 768)
         self.setStyleSheet(ui.STYLE_SHEET)
         self.setMinimumSize(1024, 768)
@@ -55,7 +65,7 @@ class MainWindow(QMainWindow):
         
         # Logo de Rios Tools en la parte superior izquierda
         logo_label = QtQLabel()
-        pixmap = QPixmap("logo.jpg")
+        pixmap = QPixmap(resource_path("logo.jpg"))
         logo_label.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo_label.setStyleSheet("padding: 10px; background-color: transparent;")
@@ -153,8 +163,10 @@ class MainWindow(QMainWindow):
         title.setObjectName("Title")
         
         btn_excel = ui.PrimaryButton("Exportar a Excel")
+        btn_excel.clicked.connect(self.export_dashboard_excel)
         btn_pdf = ui.PrimaryButton("Generar Reporte PDF")
         btn_pdf.setObjectName("Secondary")
+        btn_pdf.clicked.connect(self.export_dashboard_pdf)
         
         title_layout.addWidget(title)
         title_layout.addStretch()
@@ -308,6 +320,67 @@ class MainWindow(QMainWindow):
             gn_val = self.db.get_profit_data(30) # o del tiempo que desees
             
         self.inv_profit_chart.plot_investment_vs_profit(inv, gn_val)
+
+    def export_dashboard_excel(self):
+        try:
+            import pandas as pd
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Exportar Reporte a Excel", "Reporte_Dashboard.xlsx", "Excel Files (*.xlsx);;All Files (*)"
+            )
+            if not file_path:
+                return
+            
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                # Datos de Inventario
+                products = self.db.get_all_products()
+                if products:
+                    df_prod = pd.DataFrame(products, columns=['ID', 'Imagen', 'SKU', 'Nombre', 'Tipo Compra', 'Stock Actual', 'Precio Costo', 'Precio Venta', 'Stock Minimo', 'Impuesto', 'Stock Entrante', 'Proxima Entrega'])
+                    df_prod.to_excel(writer, sheet_name='Inventario', index=False)
+                
+                # Datos de Deudas
+                debts = self.db.get_detailed_debts()
+                if debts:
+                    df_debts = pd.DataFrame(debts, columns=['ID', 'Fecha', 'Producto', 'Costo Total', 'Tarjeta', 'Pagado', 'Vencimiento'])
+                    df_debts.to_excel(writer, sheet_name='Deudas', index=False)
+                    
+            QMessageBox.information(self, "Éxito", f"Reporte exportado correctamente a:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Ocurrió un error al exportar a Excel:\n{e}")
+
+    def export_dashboard_pdf(self):
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Generar Reporte PDF", "Reporte_Dashboard.pdf", "PDF Files (*.pdf);;All Files (*)"
+            )
+            if not file_path:
+                return
+                
+            c = canvas.Canvas(file_path, pagesize=letter)
+            c.setFont("Helvetica-Bold", 16)
+            c.drawString(50, 750, "Reporte de Dashboard - ProVision")
+            
+            c.setFont("Helvetica", 12)
+            y = 700
+            
+            c.drawString(50, y, f"Inversión / Inventario: {self.val_inv.text()}")
+            y -= 25
+            c.drawString(50, y, f"Ventas (30 días): {self.val_sales_30d.text()}")
+            y -= 25
+            c.drawString(50, y, f"Ganancia Neta (30 días): {self.val_gn.text()}")
+            y -= 25
+            c.drawString(50, y, f"Ventas (7 días): {self.val_sales.text()}")
+            y -= 25
+            c.drawString(50, y, f"Deuda Total: {self.val_debt.text()}")
+            y -= 25
+            c.drawString(50, y, f"Alertas de Stock: {self.val_stock.text()}")
+            
+            c.save()
+            QMessageBox.information(self, "Éxito", f"Reporte PDF generado correctamente a:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Ocurrió un error al generar PDF:\n{e}")
 
     def show_investment_details(self):
         dialog = InvestmentDetailDialog(self)
@@ -497,9 +570,16 @@ class MainWindow(QMainWindow):
         
         right_layout.addWidget(ui.QLabel("Cliente Asignado:"))
         customer_layout = QHBoxLayout()
-        self.pos_customer = QComboBox()
+        self.pos_customer = ui.QLineEdit()
+        self.pos_customer.setPlaceholderText("Consumidor Final (Buscar cliente...)")
         self.pos_customer.setMinimumHeight(35)
-        self.pos_customer.addItem("Consumidor Final", None)
+        
+        self.pos_customer_completer_model = QStringListModel()
+        self.pos_customer_completer = QCompleter(self.pos_customer_completer_model, self)
+        self.pos_customer_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.pos_customer_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.pos_customer_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.pos_customer.setCompleter(self.pos_customer_completer)
         
         btn_new_customer = ui.PrimaryButton("+")
         btn_new_customer.setFixedWidth(40)
@@ -509,11 +589,11 @@ class MainWindow(QMainWindow):
         customer_layout.addWidget(btn_new_customer)
         right_layout.addLayout(customer_layout)
         
-        right_layout.addWidget(ui.QLabel("Descuento Aplicado ($):"))
-        self.pos_discount = ui.QLineEdit()
-        self.pos_discount.setPlaceholderText("Ej: 5.00")
+        right_layout.addWidget(ui.QLabel("Descuento Aplicado (%):"))
+        self.pos_discount = QComboBox()
         self.pos_discount.setMinimumHeight(35)
-        self.pos_discount.textChanged.connect(self.update_cart_table)
+        self.pos_discount.addItems(["0%", "5%", "10%", "15%", "20%"])
+        self.pos_discount.currentIndexChanged.connect(self.update_cart_table)
         right_layout.addWidget(self.pos_discount)
         
         right_layout.addSpacing(20)
@@ -607,12 +687,13 @@ class MainWindow(QMainWindow):
                 item.setTextAlignment(align)
                 self.sale_table.setItem(row, col, item)
             
-        discount = 0.0
+        discount_pct = 0
         try:
-            if self.pos_discount.text().strip():
-                discount = float(self.pos_discount.text())
+            discount_pct = int(self.pos_discount.currentText().replace('%', ''))
         except ValueError:
             pass
+            
+        discount = total * (discount_pct / 100.0)
         final_total = max(0, total - discount)
         self.total_val.setText(f"$ {final_total:,.2f}")
 
@@ -620,8 +701,8 @@ class MainWindow(QMainWindow):
         self.cart_items = []
         self.update_cart_table()
         self.barcode_input.clear()
-        self.pos_discount.clear()
-        self.pos_customer.setCurrentIndex(0)
+        self.pos_discount.setCurrentIndex(0)
+        self.pos_customer.clear()
 
     def process_sale(self):
         if not self.cart_items: return
@@ -635,12 +716,13 @@ class MainWindow(QMainWindow):
             
         caja_id = open_caja[0]
         subtotal = sum(item[3] * item[4] for item in self.cart_items)
-        discount = 0.0
+        discount_pct = 0
         try:
-            if self.pos_discount.text().strip():
-                discount = float(self.pos_discount.text())
-        except ValueError: pass
-        
+            discount_pct = int(self.pos_discount.currentText().replace('%', ''))
+        except ValueError:
+            pass
+            
+        discount = subtotal * (discount_pct / 100.0)
         total = max(0, subtotal - discount)
         
         # 2. Diálogo de Pago
@@ -651,10 +733,34 @@ class MainWindow(QMainWindow):
             # items para la BD: (id, qty, price)
             db_items = [(item[0], item[3], item[4]) for item in self.cart_items]
             
-            customer_id = self.pos_customer.currentData()
+            customer_text = self.pos_customer.text().strip()
+            if not customer_text:
+                customer_text = "Consumidor Final"
+            customer_id = getattr(self, 'pos_customer_map', {}).get(customer_text, None)
             ticket = self.db.add_sale(total, payment_method, db_items, caja_id=caja_id, customer_id=customer_id, discount=discount)
             if ticket:
-                QMessageBox.information(self, "Venta Exitosa", f"Ticket generado: {ticket}")
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Venta Exitosa")
+                msg_box.setText(f"Venta registrada exitosamente.\nTicket generado: {ticket}")
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                
+                btn_ok = msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+                btn_imprimir = msg_box.addButton("Imprimir", QMessageBox.ButtonRole.ActionRole)
+                
+                msg_box.exec()
+                
+                if msg_box.clickedButton() == btn_imprimir:
+                    try:
+                        from ticket_printer import printer
+                        ticket_data = self.db.get_full_ticket_data(ticket)
+                        if ticket_data:
+                            ticket_data['recibido'] = total
+                            ticket_data['cambio'] = 0.0
+                            printer.imprimir_ticket_sync(ticket_data)
+                    except Exception as e:
+                        import logging
+                        logging.error(f"Fallo al disparar impresión: {e}")
+                        QMessageBox.warning(self, "Error", f"No se pudo imprimir:\n{e}")
                 self.clear_sale()
                 self.load_inventory_data()
                 self.update_dashboard_data()
@@ -1365,9 +1471,9 @@ class MainWindow(QMainWindow):
             pass
 
     def register_purchase(self):
-        query = self.compra_product.text()
-        qty_text = self.compra_qty.text()
-        cost_text = self.compra_cost.text()
+        query = self.compra_product.text().strip()
+        qty_text = self.compra_qty.text().strip()
+        cost_text = self.compra_cost.text().strip()
         
         if not query or not qty_text or not cost_text:
             QMessageBox.warning(self, "Error", "Por favor llene todos los campos.")
@@ -1515,7 +1621,7 @@ class MainWindow(QMainWindow):
     def handle_compra_scan(self):
         """Maneja el evento de escaneo en la sección de compras."""
         if self.quick_mode.isChecked():
-            query = self.compra_product.text()
+            query = self.compra_product.text().strip()
             if not query: return
             
             product = self.db.get_product_by_sku_or_name(query)
@@ -1673,74 +1779,80 @@ class MainWindow(QMainWindow):
             self.caja_layout.addLayout(btns_layout)
             
             # Tabla de Movimientos del Día (Ventas)
+            header_movs = QHBoxLayout()
             lbl_movs = ui.QLabel("Descripción Detallada de las Ventas del Día")
             lbl_movs.setObjectName("Secondary")
-            self.caja_layout.addWidget(lbl_movs)
             
-            sales_table = QTableWidget(0, 4)
-            sales_table.setHorizontalHeaderLabels(["Hora/Fecha", "Ticket", "Método", "Total"])
-            sales_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            sales_table.verticalHeader().setVisible(False)
-            sales_table.setMinimumHeight(200)
+            search_ticket = ui.SearchField()
+            search_ticket.setPlaceholderText("Buscar por número de ticket...")
+            search_ticket.setFixedWidth(250)
+            search_ticket.textChanged.connect(self.filter_caja_sales)
+            
+            header_movs.addWidget(lbl_movs)
+            header_movs.addStretch()
+            header_movs.addWidget(search_ticket)
+            
+            self.caja_layout.addLayout(header_movs)
+            
+            self.caja_sales_table = QTableWidget(0, 7)
+            self.caja_sales_table.setHorizontalHeaderLabels(["Hora/Fecha", "Ticket", "Cliente", "Descuento", "Método", "Total", "Acción"])
+            self.caja_sales_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            self.caja_sales_table.verticalHeader().setVisible(False)
+            self.caja_sales_table.setMinimumHeight(200)
             
             caja_sales = self.db.get_caja_sales(c_id)
-            sales_table.setRowCount(len(caja_sales))
+            self.caja_sales_table.setRowCount(len(caja_sales))
             for i, sale in enumerate(caja_sales):
-                s_date, s_ticket, s_total, s_method = sale
-                sales_table.setItem(i, 0, QTableWidgetItem(s_date))
-                sales_table.setItem(i, 1, QTableWidgetItem(s_ticket))
-                sales_table.setItem(i, 2, QTableWidgetItem(s_method))
+                s_date, s_ticket, s_client, s_discount, s_method, s_total = sale
+                self.caja_sales_table.setItem(i, 0, QTableWidgetItem(s_date))
+                self.caja_sales_table.setItem(i, 1, QTableWidgetItem(s_ticket))
+                self.caja_sales_table.setItem(i, 2, QTableWidgetItem(s_client))
+                self.caja_sales_table.setItem(i, 3, QTableWidgetItem(f"${s_discount:,.2f}"))
+                self.caja_sales_table.setItem(i, 4, QTableWidgetItem(s_method))
                 
                 total_item = QTableWidgetItem(f"${s_total:,.2f}")
                 total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                sales_table.setItem(i, 3, total_item)
+                self.caja_sales_table.setItem(i, 5, total_item)
                 
-            self.caja_layout.addWidget(sales_table)
+                btn_detail = ui.TableActionButton("Ver Detalles")
+                btn_detail.clicked.connect(lambda checked, t=s_ticket: self.show_ticket_detail(t))
+                self.caja_sales_table.setCellWidget(i, 6, btn_detail)
+                
+            self.caja_layout.addWidget(self.caja_sales_table)
             self.caja_layout.addStretch()
             
-            # --- SECCIÓN: HISTORIAL DE CORTES ---
-            hist_title = ui.QLabel("Historial de Cortes Recientes")
-            hist_title.setStyleSheet("font-weight: bold; margin-top: 20px; color: #94A3B8;")
-            self.caja_layout.addWidget(hist_title)
+            # --- BOTÓN PARA HISTORIAL DE CORTES ---
+            btn_history = ui.PrimaryButton("Ver Detalles de Cortes Recientes")
+            btn_history.clicked.connect(self.show_caja_history)
             
-            self.hist_table = QTableWidget(0, 5)
-            self.hist_table.setHorizontalHeaderLabels(["Apertura", "Cierre", "Ventas", "Diferencia", "Estado"])
-            self.hist_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            self.hist_table.setStyleSheet("background-color: #1E293B; color: white;")
-            self.caja_layout.addWidget(self.hist_table)
-            self.load_caja_history()
+            btn_daily_sales = ui.PrimaryButton("Ver Historial de Ventas por Día")
+            btn_daily_sales.setObjectName("Secondary")
+            btn_daily_sales.clicked.connect(self.show_daily_sales_history)
+            
+            self.caja_layout.addWidget(btn_history)
+            self.caja_layout.addWidget(btn_daily_sales)
 
-    def load_caja_history(self):
-        history = self.db.get_caja_history()
-        self.hist_table.setRowCount(0)
-        for h in history[:10]: # Últimos 10
-            # id, m_inicial, f_apertura, f_cierre, estado, dif, resumen_json
-            row = self.hist_table.rowCount()
-            self.hist_table.insertRow(row)
-            
-            # Formatear c_resumen para sacar ventas totales si existe
-            ventas_total = 0
-            if h[6]:
-                try:
-                    res = json.loads(h[6])
-                    ventas_total = res.get('ventas_efectivo', 0) + res.get('ventas_tarjeta', 0)
-                except: pass
+    def show_daily_sales_history(self):
+        dialog = DailySalesHistoryDialog(self)
+        dialog.exec()
 
-            data = [
-                (str(h[2]), Qt.AlignmentFlag.AlignLeft),
-                (str(h[3]) if h[3] else "-", Qt.AlignmentFlag.AlignLeft),
-                (f"$ {ventas_total:,.2f}", Qt.AlignmentFlag.AlignRight),
-                (f"$ {h[5]:,.2f}", Qt.AlignmentFlag.AlignRight),
-                (h[4].upper(), Qt.AlignmentFlag.AlignCenter)
-            ]
-            
-            for col, (text, align) in enumerate(data):
-                item = QTableWidgetItem(text)
-                item.setTextAlignment(align)
-                if col == 4: # Estado
-                    if h[4] == 'abierta': item.setForeground(QBrush(QColor("#10B981")))
-                    else: item.setForeground(QBrush(QColor("#94A3B8")))
-                self.hist_table.setItem(row, col, item)
+    def filter_caja_sales(self, text):
+        if not hasattr(self, 'caja_sales_table'): return
+        
+        for row in range(self.caja_sales_table.rowCount()):
+            ticket_item = self.caja_sales_table.item(row, 1)
+            if ticket_item and text.lower() in ticket_item.text().lower():
+                self.caja_sales_table.setRowHidden(row, False)
+            else:
+                self.caja_sales_table.setRowHidden(row, True)
+
+    def show_ticket_detail(self, ticket_number):
+        dialog = TicketDetailDialog(ticket_number, self)
+        dialog.exec()
+
+    def show_caja_history(self):
+        dialog = CajaHistoryDialog(self)
+        dialog.exec()
 
     def open_caja_action(self):
         try:
@@ -1794,13 +1906,82 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.create_supplier_config(), "Proveedores")
         tabs.addTab(self.create_card_config(), "Tarjetas de Crédito")
         tabs.addTab(self.create_category_config(), "Categorías")
+        tabs.addTab(self.create_brand_config(), "SKU / Marcas")
         tabs.addTab(self.create_personnel_config(), "Personal")
+        
         tabs.addTab(self.create_printer_config(), "Impresora de Etiquetas")
+        tabs.addTab(self.create_ticket_printer_config(), "Impresora de Tickets")
         tabs.addTab(self.create_database_config(), "Base de Datos")
         layout.addWidget(tabs)
 
         scroll.setWidget(page)
         return scroll
+
+    def create_ticket_printer_config(self):
+        from ticket_printer import printer
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        self.combo_ticket_printers = QComboBox()
+        try:
+            for p in printer.obtener_impresoras():
+                self.combo_ticket_printers.addItem(p)
+        except Exception: pass
+        
+        cfg = printer.get_config()
+        idx = self.combo_ticket_printers.findText(cfg.get("printer_name", ""))
+        if idx >= 0:
+            self.combo_ticket_printers.setCurrentIndex(idx)
+            
+        self.combo_paper = QComboBox()
+        self.combo_paper.addItems(["58", "80"])
+        idx = self.combo_paper.findText(str(cfg.get("paper_width", 58)))
+        if idx >= 0: self.combo_paper.setCurrentIndex(idx)
+        
+        self.combo_copies = QComboBox()
+        self.combo_copies.addItems(["1", "2", "3"])
+        idx = self.combo_copies.findText(str(cfg.get("copies", 1)))
+        if idx >= 0: self.combo_copies.setCurrentIndex(idx)
+        
+        from PyQt6.QtWidgets import QCheckBox
+        self.chk_cut = QCheckBox("Corte Automático")
+        self.chk_cut.setChecked(cfg.get("auto_cut", True))
+        
+        self.chk_drawer = QCheckBox("Apertura Cajón de Dinero")
+        self.chk_drawer.setChecked(cfg.get("cash_drawer", True))
+        
+        btn_save = ui.PrimaryButton("Guardar Configuración")
+        btn_save.clicked.connect(self.save_ticket_printer_config)
+        
+        btn_test = ui.PrimaryButton("Impresión de Prueba")
+        btn_test.setObjectName("Secondary")
+        btn_test.clicked.connect(lambda: printer.imprimir_ticket_prueba_sync())
+        
+        layout.addRow("Impresora:", self.combo_ticket_printers)
+        layout.addRow("Ancho de papel (mm):", self.combo_paper)
+        layout.addRow("Copias:", self.combo_copies)
+        layout.addRow("", self.chk_cut)
+        layout.addRow("", self.chk_drawer)
+        layout.addRow("", btn_save)
+        layout.addRow("", btn_test)
+        
+        return widget
+
+    def save_ticket_printer_config(self):
+        try:
+            from ticket_printer import printer
+            printer.set_config("printer_name", self.combo_ticket_printers.currentText())
+            printer.set_config("paper_width", int(self.combo_paper.currentText()))
+            printer.set_config("copies", int(self.combo_copies.currentText()))
+            printer.set_config("auto_cut", self.chk_cut.isChecked())
+            printer.set_config("cash_drawer", self.chk_drawer.isChecked())
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Éxito", "Configuración de ticket guardada.")
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"No se pudo guardar la configuración: {e}")
 
     def create_printer_config(self):
         from printing.printer_config import PrinterConfig
@@ -2157,6 +2338,73 @@ class MainWindow(QMainWindow):
             if self.db.delete_category(c_id):
                 self.load_categories_table()
 
+    def create_brand_config(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        top = QHBoxLayout()
+        self.brand_name_input = ui.QLineEdit()
+        self.brand_name_input.setPlaceholderText("Nombre de la Marca (ej. Dewalt)")
+        self.brand_prefix_input = ui.QLineEdit()
+        self.brand_prefix_input.setPlaceholderText("Prefijo (ej. DW)")
+        btn_add = ui.PrimaryButton("Añadir")
+        btn_add.clicked.connect(self.add_brand_prefix)
+        top.addWidget(self.brand_name_input)
+        top.addWidget(self.brand_prefix_input)
+        top.addWidget(btn_add)
+        layout.addLayout(top)
+
+        self.brand_table = QTableWidget(0, 3)
+        self.brand_table.setHorizontalHeaderLabels(["ID", "Marca", "Prefijo"])
+        self.brand_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.brand_table.verticalHeader().setDefaultSectionSize(35)
+        self.brand_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.brand_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        layout.addWidget(self.brand_table)
+
+        btn_del = ui.AlertButton("Eliminar Seleccionado")
+        btn_del.clicked.connect(self.delete_brand_prefix)
+        layout.addWidget(btn_del)
+
+        self.load_brand_table()
+        return widget
+
+    def load_brand_table(self):
+        prefixes = self.db.get_all_brand_prefixes()
+        self.brand_table.setRowCount(0)
+        for p_id, brand, prefix in prefixes:
+            row = self.brand_table.rowCount()
+            self.brand_table.insertRow(row)
+            
+            item_id = QTableWidgetItem(str(p_id))
+            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.brand_table.setItem(row, 0, item_id)
+            
+            item_brand = QTableWidgetItem(brand)
+            item_brand.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.brand_table.setItem(row, 1, item_brand)
+
+            item_prefix = QTableWidgetItem(prefix)
+            item_prefix.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.brand_table.setItem(row, 2, item_prefix)
+
+    def add_brand_prefix(self):
+        brand = self.brand_name_input.text()
+        prefix = self.brand_prefix_input.text()
+        if brand and prefix and self.db.add_brand_prefix(brand, prefix):
+            self.brand_name_input.clear()
+            self.brand_prefix_input.clear()
+            self.load_brand_table()
+        else:
+            QMessageBox.warning(self, "Error", "No se pudo añadir. Verifique que no esté duplicado y que ambos campos tengan texto.")
+
+    def delete_brand_prefix(self):
+        row = self.brand_table.currentRow()
+        if row >= 0:
+            p_id = int(self.brand_table.item(row, 0).text())
+            if self.db.delete_brand_prefix(p_id):
+                self.load_brand_table()
+
     def create_personnel_config(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -2227,17 +2475,22 @@ class MainWindow(QMainWindow):
 
     def load_pos_customers(self):
         customers = self.db.get_all_customers()
-        self.pos_customer.clear()
-        self.pos_customer.addItem("Consumidor Final", None)
+        suggestions = ["Consumidor Final"]
+        self.pos_customer_map = {"Consumidor Final": None}
         for c in customers:
-            self.pos_customer.addItem(c[1], c[0])
+            text = f"{c[1]} - {c[0]}"
+            suggestions.append(text)
+            self.pos_customer_map[text] = c[0]
+        self.pos_customer_completer_model.setStringList(suggestions)
 
     def pos_add_customer(self):
         dialog = NewCustomerDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.load_pos_customers()
-            idx = self.pos_customer.count() - 1
-            self.pos_customer.setCurrentIndex(idx)
+            customers = self.db.get_all_customers()
+            if customers:
+                last_c = customers[-1]
+                self.pos_customer.setText(f"{last_c[1]} - {last_c[0]}")
             self.load_customers_table()
 
     def create_customers(self):
@@ -2676,6 +2929,9 @@ class NewProductDialog(QDialog):
         # 1. Creación de Widgets
         self.sku = ui.QLineEdit()
         self.name = ui.QLineEdit()
+        self.marca = ui.QLineEdit()
+        self.modelo = ui.QLineEdit()
+        self.voltaje = ui.QLineEdit()
         self.category = QComboBox()
         self.cost = ui.QLineEdit()
         self.tax_pct = ui.QLineEdit()
@@ -2690,6 +2946,13 @@ class NewProductDialog(QDialog):
 
         # 2. Configuración y Conexiones
         self.load_categories()
+        
+        # Setup autocomplete for Marca
+        brand_list = [b[1] for b in self.db.get_all_brand_prefixes()]
+        self.marca_completer = QCompleter(brand_list, self)
+        self.marca_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.marca.setCompleter(self.marca_completer)
+        
         self.sku.returnPressed.connect(lambda: self.name.setFocus())
         self.btn_img.clicked.connect(self.select_image)
         self.btn_apply_suggested.clicked.connect(self.apply_suggested_price)
@@ -2738,6 +3001,9 @@ class NewProductDialog(QDialog):
         
         form.addRow("SKU:", sku_layout)
         form.addRow("Nombre:", self.name)
+        form.addRow("Marca:", self.marca)
+        form.addRow("Modelo:", self.modelo)
+        form.addRow("Voltaje:", self.voltaje)
         form.addRow("Categoría:", self.category)
         form.addRow("Precio Costo ($):", self.cost)
         form.addRow("Impuesto (%):", self.tax_pct)
@@ -2762,8 +3028,19 @@ class NewProductDialog(QDialog):
         layout.addWidget(btn_save)
 
     def generate_sku(self):
-        new_sku = str(random.randint(100000000000, 999999999999))
+        marca = self.marca.text().strip()
+        if not marca:
+            QMessageBox.warning(self, "Error", "Debe capturar la marca del producto antes de generar el SKU.")
+            return False
+            
+        prefix = self.db.get_prefix_for_brand(marca)
+        if not prefix:
+            QMessageBox.warning(self, "Error", f"La marca '{marca}' no tiene un prefijo configurado. Por favor, registre la marca en el menú de Configuración -> SKU / Marcas.")
+            return False
+            
+        new_sku = self.db.get_next_sku_sequence(prefix)
         self.sku.setText(new_sku)
+        return True
 
     def print_barcode(self):
         sku_text = self.sku.text().strip()
@@ -2811,9 +3088,16 @@ class NewProductDialog(QDialog):
             self.img_path_label.setText(os.path.basename(file_path))
 
     def save(self):
+        if not self.sku.text().strip():
+            if not self.generate_sku():
+                return
+                
         try:
-            sku = self.sku.text()
+            sku = self.sku.text().strip()
             name = self.name.text()
+            marca = self.marca.text()
+            modelo = self.modelo.text()
+            voltaje = self.voltaje.text()
             category = self.category.currentText()
             cost = float(self.cost.text())
             price = float(self.price.text())
@@ -2831,7 +3115,8 @@ class NewProductDialog(QDialog):
                     QMessageBox.warning(self, "Error de Imagen", f"No se pudo procesar la imagen: {img_err}")
 
             if self.db.add_product(sku, name, category, cost, price, min_st, stock, 
-                                 image_path=final_img_path, tax_percentage=tax_pct):
+                                 image_path=final_img_path, tax_percentage=tax_pct,
+                                 marca=marca, modelo=modelo, voltaje=voltaje):
                 QMessageBox.information(self, "Éxito", "Producto guardado correctamente.")
                 self.accept()
             else:
@@ -2864,6 +3149,9 @@ class EditProductDialog(QDialog):
 
         self.sku = ui.QLineEdit()
         self.name = ui.QLineEdit()
+        self.marca = ui.QLineEdit()
+        self.modelo = ui.QLineEdit()
+        self.voltaje = ui.QLineEdit()
         self.category = QComboBox()
         self.cost = ui.QLineEdit()
         self.tax_pct = ui.QLineEdit()
@@ -2880,6 +3168,13 @@ class EditProductDialog(QDialog):
 
         # 2. Configuración y Conexiones
         self.load_categories()
+        
+        # Setup autocomplete for Marca
+        brand_list = [b[1] for b in self.db.get_all_brand_prefixes()]
+        self.marca_completer = QCompleter(brand_list, self)
+        self.marca_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.marca.setCompleter(self.marca_completer)
+        
         self.sku.returnPressed.connect(lambda: self.name.setFocus())
         self.btn_img.clicked.connect(self.select_image)
         self.btn_img.setObjectName("Secondary")
@@ -2907,6 +3202,9 @@ class EditProductDialog(QDialog):
         form.addRow("Imagen:", self.btn_img)
         form.addRow("SKU:", sku_layout)
         form.addRow("Nombre:", self.name)
+        form.addRow("Marca:", self.marca)
+        form.addRow("Modelo:", self.modelo)
+        form.addRow("Voltaje:", self.voltaje)
         form.addRow("Categoría:", self.category)
         form.addRow("Costo ($):", self.cost)
         form.addRow("Impuesto (%):", self.tax_pct)
@@ -2925,13 +3223,49 @@ class EditProductDialog(QDialog):
 
         layout.addLayout(form)
 
+        buttons_layout = QHBoxLayout()
+        btn_delete = ui.PrimaryButton("Borrar Producto")
+        btn_delete.setStyleSheet("background-color: #EF4444; color: white;")
+        btn_delete.clicked.connect(self.delete_product)
+        
         btn_save = ui.PrimaryButton("Guardar Cambios")
         btn_save.clicked.connect(self.save)
-        layout.addWidget(btn_save)
+        
+        buttons_layout.addWidget(btn_delete)
+        buttons_layout.addWidget(btn_save)
+        layout.addLayout(buttons_layout)
+
+    def delete_product(self):
+        reply = QMessageBox.question(
+            self, 'Confirmar Eliminación',
+            '¿Estás seguro de que deseas eliminar este producto y toda su información relacionada (compras, historial)? Esta acción no se puede deshacer.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.db.delete_product_completely(self.product_id):
+                QMessageBox.information(self, "Éxito", "Producto eliminado correctamente.")
+                self.accept()
+                if hasattr(self.parent, 'load_inventory_data'):
+                    self.parent.load_inventory_data()
+            else:
+                QMessageBox.critical(self, "Error", "No se pudo eliminar el producto.")
 
     def generate_sku(self):
-        new_sku = str(random.randint(100000000000, 999999999999))
+        marca = self.marca.text().strip()
+        if not marca:
+            QMessageBox.warning(self, "Error", "Debe capturar la marca del producto antes de generar el SKU.")
+            return False
+            
+        prefix = self.db.get_prefix_for_brand(marca)
+        if not prefix:
+            QMessageBox.warning(self, "Error", f"La marca '{marca}' no tiene un prefijo configurado. Por favor, registre la marca en el menú de Configuración -> SKU / Marcas.")
+            return False
+            
+        new_sku = self.db.get_next_sku_sequence(prefix)
         self.sku.setText(new_sku)
+        return True
 
     def print_barcode(self):
         sku_text = self.sku.text().strip()
@@ -2988,7 +3322,7 @@ class EditProductDialog(QDialog):
         try:
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT sku, name, category, cost_price, selling_price, min_stock, current_stock, image_path, tax_percentage FROM products WHERE id = ?", (self.product_id,))
+                cursor.execute("SELECT sku, name, category, cost_price, selling_price, min_stock, current_stock, image_path, tax_percentage, marca, modelo, voltaje FROM products WHERE id = ?", (self.product_id,))
                 data = cursor.fetchone()
                 if data:
                     self.sku.setText(data[0])
@@ -3000,13 +3334,23 @@ class EditProductDialog(QDialog):
                     self.stock.setText(str(data[6]))
                     self.image_path = data[7]
                     self.tax_pct.setText(str(data[8]))
+                    self.marca.setText(str(data[9]) if data[9] else "")
+                    self.modelo.setText(str(data[10]) if data[10] else "")
+                    self.voltaje.setText(str(data[11]) if data[11] else "")
         except sqlite3.Error as e:
             print(f"Error al cargar producto: {e}")
 
     def save(self):
+        if not self.sku.text().strip():
+            if not self.generate_sku():
+                return
+                
         try:
-            sku = self.sku.text()
+            sku = self.sku.text().strip()
             name = self.name.text()
+            marca = self.marca.text()
+            modelo = self.modelo.text()
+            voltaje = self.voltaje.text()
             category = self.category.currentText()
             cost = float(self.cost.text())
             price = float(self.price.text())
@@ -3014,7 +3358,7 @@ class EditProductDialog(QDialog):
             min_st = int(self.min_stock.text())
             stock = int(self.stock.text())
 
-            if self.db.update_product(self.product_id, sku, name, category, cost, price, min_st, stock, self.image_path, tax_percentage=tax_pct):
+            if self.db.update_product(self.product_id, sku, name, category, cost, price, min_st, stock, self.image_path, tax_percentage=tax_pct, marca=marca, modelo=modelo, voltaje=voltaje):
                 QMessageBox.information(self, "Éxito", "Producto actualizado correctamente.")
                 self.accept()
             else:
@@ -3351,6 +3695,218 @@ class PendingOrdersDialog(QDialog):
                 self.accept()
             else:
                 QMessageBox.critical(self, "Error", "No se pudo actualizar el inventario.")
+
+class CajaHistoryDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.db = parent.db
+        self.setWindowTitle("Historial de Cortes de Caja")
+        self.setMinimumSize(800, 400)
+        self.setStyleSheet(ui.STYLE_SHEET)
+        
+        layout = QVBoxLayout(self)
+        
+        title = ui.QLabel("Historial Detallado de Cortes Recientes")
+        title.setObjectName("Title")
+        layout.addWidget(title)
+        
+        self.hist_table = QTableWidget(0, 5)
+        self.hist_table.setHorizontalHeaderLabels(["Apertura", "Cierre", "Ventas", "Diferencia", "Estado"])
+        self.hist_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.hist_table.setStyleSheet("background-color: #1E293B; color: white;")
+        layout.addWidget(self.hist_table)
+        
+        self.load_caja_history()
+        
+        btn_close = ui.PrimaryButton("Cerrar")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+    def load_caja_history(self):
+        import json
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QTableWidgetItem
+        from PyQt6.QtGui import QBrush, QColor
+        
+        history = self.db.get_caja_history()
+        self.hist_table.setRowCount(0)
+        for h in history[:50]: # Últimos 50
+            row = self.hist_table.rowCount()
+            self.hist_table.insertRow(row)
+            
+            ventas_total = 0
+            if h[6]:
+                try:
+                    res = json.loads(h[6])
+                    ventas_total = res.get('ventas_efectivo', 0) + res.get('ventas_tarjeta', 0)
+                except: pass
+
+            data = [
+                (str(h[2]), Qt.AlignmentFlag.AlignLeft),
+                (str(h[3]) if h[3] else "-", Qt.AlignmentFlag.AlignLeft),
+                (f"$ {ventas_total:,.2f}", Qt.AlignmentFlag.AlignRight),
+                (f"$ {h[5]:,.2f}", Qt.AlignmentFlag.AlignRight),
+                (h[4].upper(), Qt.AlignmentFlag.AlignCenter)
+            ]
+            
+            for col, (text, align) in enumerate(data):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(align)
+                if col == 4:
+                    if h[4] == 'abierta': item.setForeground(QBrush(QColor("#10B981")))
+                    else: item.setForeground(QBrush(QColor("#94A3B8")))
+                self.hist_table.setItem(row, col, item)
+
+class DailySalesHistoryDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.db = parent.db
+        self.setWindowTitle("Historial de Ventas por Día")
+        self.setMinimumSize(700, 400)
+        self.setStyleSheet(ui.STYLE_SHEET)
+        
+        layout = QVBoxLayout(self)
+        
+        title_layout = QHBoxLayout()
+        title = ui.QLabel("Ventas por Día")
+        title.setObjectName("Title")
+        
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["Todos los tiempos", "Hoy", "Última Semana", "Último Mes"])
+        self.filter_combo.currentIndexChanged.connect(self.load_data)
+        
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+        title_layout.addWidget(ui.QLabel("Filtrar:"))
+        title_layout.addWidget(self.filter_combo)
+        
+        layout.addLayout(title_layout)
+        
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Fecha", "Tickets", "Efectivo", "Tarjeta", "Total del Día"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+        
+        self.load_data()
+        
+        btn_close = ui.PrimaryButton("Cerrar")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+    def load_data(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QTableWidgetItem
+        
+        idx = self.filter_combo.currentIndex()
+        if idx == 1: f_type = 'today'
+        elif idx == 2: f_type = 'week'
+        elif idx == 3: f_type = 'month'
+        else: f_type = 'all'
+        
+        data = self.db.get_daily_sales_summary(f_type)
+        self.table.setRowCount(0)
+        
+        for row_data in data:
+            day, tickets, efectivo, tarjeta, total = row_data
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            
+            items = [
+                QTableWidgetItem(str(day)),
+                QTableWidgetItem(str(tickets)),
+                QTableWidgetItem(f"$ {efectivo:,.2f}" if efectivo else "$ 0.00"),
+                QTableWidgetItem(f"$ {tarjeta:,.2f}" if tarjeta else "$ 0.00"),
+                QTableWidgetItem(f"$ {total:,.2f}" if total else "$ 0.00")
+            ]
+            
+            items[0].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[1].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[2].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items[3].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items[4].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            
+            for col, item in enumerate(items):
+                self.table.setItem(row, col, item)
+
+class TicketDetailDialog(QDialog):
+    def __init__(self, ticket_number, parent=None):
+        super().__init__(parent)
+        self.ticket_number = ticket_number
+        self.db = parent.db
+        self.setWindowTitle(f"Detalle del Ticket: {ticket_number}")
+        self.setMinimumSize(600, 400)
+        self.setStyleSheet(ui.STYLE_SHEET)
+        
+        layout = QVBoxLayout(self)
+        
+        title = ui.QLabel(f"Detalle de Compra - {ticket_number}")
+        title.setObjectName("Secondary")
+        layout.addWidget(title)
+        
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["SKU", "Producto", "Cantidad", "Precio Unitario"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+        
+        self.load_data()
+        
+        btns_layout = QHBoxLayout()
+        btn_reprint = ui.PrimaryButton("Reimprimir Ticket")
+        btn_reprint.setStyleSheet("background-color: #0EA5E9; color: white;")
+        btn_reprint.clicked.connect(self.reprint_ticket)
+        
+        btn_close = ui.PrimaryButton("Cerrar")
+        btn_close.clicked.connect(self.accept)
+        
+        btns_layout.addWidget(btn_reprint)
+        btns_layout.addWidget(btn_close)
+        layout.addLayout(btns_layout)
+
+    def reprint_ticket(self):
+        try:
+            from ticket_printer import printer
+            ticket_data = self.db.get_full_ticket_data(self.ticket_number)
+            if ticket_data:
+                # Se manda a imprimir en hilo secundario o sync capturando error
+                import threading
+                def _do_print():
+                    try:
+                        printer.imprimir_ticket_sync(ticket_data, is_reprint=True)
+                    except Exception as e:
+                        print(f"Error imprimiendo ticket {self.ticket_number}: {e}")
+                
+                threading.Thread(target=_do_print).start()
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Impresión", "Enviado a imprimir correctamente.")
+            else:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Error", "No se encontraron los datos de la venta.")
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error de Impresora", f"Error de impresión: {e}")
+
+    def load_data(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QTableWidgetItem
+        
+        details = self.db.get_sale_details_by_ticket(self.ticket_number)
+        self.table.setRowCount(0)
+        for sku, name, qty, price in details:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            
+            self.table.setItem(row, 0, QTableWidgetItem(str(sku)))
+            self.table.setItem(row, 1, QTableWidgetItem(name))
+            
+            qty_item = QTableWidgetItem(str(qty))
+            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 2, qty_item)
+            
+            price_item = QTableWidgetItem(f"$ {price:,.2f}")
+            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 3, price_item)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -7,3 +7,5 @@ pyinstaller
 pytest
 pytest-qt
 python-barcode
+openpyxl
+pywin32
