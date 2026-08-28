@@ -122,6 +122,10 @@ class DatabaseManager:
                         due_date TIMESTAMP,           -- Fecha límite de pago
                         origin_state TEXT,            -- Estado de origen (USA)
                         tax_percentage REAL DEFAULT 0, -- Porcentaje de impuesto
+                        purchase_type TEXT DEFAULT 'Física', -- Física, En Línea
+                        delivery_date TIMESTAMP,
+                        delivery_status TEXT DEFAULT 'Entregado',
+                        shipping_cost REAL DEFAULT 0.0,
                         FOREIGN KEY (product_id) REFERENCES products(id),
                         FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
                     )
@@ -155,8 +159,11 @@ class DatabaseManager:
                 try:
                     cursor.execute("ALTER TABLE purchases ADD COLUMN delivery_status TEXT DEFAULT 'Entregado'")
                 except: pass
+                try:
+                    cursor.execute("ALTER TABLE purchases ADD COLUMN shipping_cost REAL DEFAULT 0.0")
+                except: pass
 
-                # Tabla de Ventas
+                # Migraciones para users Ventas
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS sales (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -524,7 +531,10 @@ class DatabaseManager:
                            IFNULL((SELECT CASE WHEN combo_reference IS NOT NULL AND combo_reference != '' THEN 'Combo' ELSE 'Individual' END FROM purchases WHERE product_id = p.id AND is_return = 0 ORDER BY date DESC LIMIT 1), 'Individual') as purchase_type, 
                            p.current_stock, p.cost_price, p.selling_price, p.min_stock, p.tax_percentage,
                            IFNULL((SELECT SUM(quantity) FROM purchases WHERE product_id = p.id AND delivery_status = 'Pendiente' AND is_return = 0), 0) as incoming_stock,
-                           (SELECT MIN(delivery_date) FROM purchases WHERE product_id = p.id AND delivery_status = 'Pendiente' AND is_return = 0) as next_delivery
+                           (SELECT MIN(delivery_date) FROM purchases WHERE product_id = p.id AND delivery_status = 'Pendiente' AND is_return = 0) as next_delivery,
+                           p.marca, p.modelo, p.voltaje,
+                           IFNULL((SELECT SUM(quantity) FROM purchases WHERE product_id = p.id AND is_return = 0 AND (combo_reference IS NOT NULL AND combo_reference != '')), 0) as combo_qty,
+                           IFNULL((SELECT SUM(quantity) FROM purchases WHERE product_id = p.id AND is_return = 0 AND (combo_reference IS NULL OR combo_reference = '')), 0) as indiv_qty
                     FROM products p
                 """)
                 return cursor.fetchall()
@@ -601,7 +611,7 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT sku, name, cost_price, tax_percentage, selling_price 
+                    SELECT sku, name, cost_price, tax_percentage, selling_price, marca, modelo 
                     FROM products 
                     WHERE sku LIKE ? OR name LIKE ? OR marca LIKE ? OR modelo LIKE ?
                     LIMIT ?
@@ -614,15 +624,19 @@ class DatabaseManager:
     def add_purchase(self, product_id, qty, unit_cost, supplier_id, payment_method, buyer_tag, 
                      is_return=0, card_name=None, is_paid=1, due_date=None, 
                      origin_state=None, tax_percentage=0, new_selling_price=None,
-                     purchase_type='Física', delivery_date=None, delivery_status='Entregado'):
+                     purchase_type='Física', delivery_date=None, delivery_status='Entregado',
+                     shipping_cost=0.0):
         """
         Registra una compra, actualiza el stock y opcionalmente el precio de venta del producto.
         El costo total incluye el impuesto aplicado.
         """
-        # Calcular costo total con impuesto
+        # Calcular costo total con impuesto y envío prorrateado
         base_cost = qty * unit_cost
         tax_amount = base_cost * (tax_percentage / 100.0)
-        total_cost_with_tax = base_cost + tax_amount
+        total_cost_with_tax = base_cost + tax_amount + shipping_cost
+        # Ajustamos el costo unitario para que refleje el costo real (incluyendo envío e impuestos)
+        # Esto es importante para el cálculo del costo promedio.
+        actual_unit_cost = (total_cost_with_tax / qty) if qty > 0 else unit_cost
 
         try:
             with self.get_connection() as conn:
@@ -632,12 +646,12 @@ class DatabaseManager:
                     INSERT INTO purchases (
                         product_id, quantity, unit_cost, total_cost, supplier_id, 
                         payment_method, buyer_tag, is_return, card_name, is_paid, 
-                        due_date, origin_state, tax_percentage, purchase_type, delivery_date, delivery_status
+                        due_date, origin_state, tax_percentage, purchase_type, delivery_date, delivery_status, shipping_cost
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (product_id, qty, unit_cost, total_cost_with_tax, supplier_id, 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (product_id, qty, actual_unit_cost, total_cost_with_tax, supplier_id, 
                       payment_method, buyer_tag, is_return, card_name, is_paid, 
-                      due_date, origin_state, tax_percentage, purchase_type, delivery_date, delivery_status))
+                      due_date, origin_state, tax_percentage, purchase_type, delivery_date, delivery_status, shipping_cost))
                 
                 # 2. Actualizar stock
                 if delivery_status != 'Pendiente':
@@ -649,10 +663,10 @@ class DatabaseManager:
                 if not is_return:
                     if new_selling_price is not None:
                         cursor.execute("UPDATE products SET cost_price = ?, tax_percentage = ?, selling_price = ? WHERE id = ?", 
-                                       (unit_cost, tax_percentage, new_selling_price, product_id))
+                                       (actual_unit_cost, tax_percentage, new_selling_price, product_id))
                     else:
                         cursor.execute("UPDATE products SET cost_price = ?, tax_percentage = ? WHERE id = ?", 
-                                       (unit_cost, tax_percentage, product_id))
+                                       (actual_unit_cost, tax_percentage, product_id))
                 
                 conn.commit()
                 return True
@@ -664,7 +678,7 @@ class DatabaseManager:
 
     def add_combo_purchase(self, combo_name, total_cost, distribution_method, items, 
                            supplier_id, payment_method, buyer_tag, origin_state, 
-                           purchase_type, delivery_date, delivery_status):
+                           purchase_type, delivery_date, delivery_status, shipping_cost=0.0):
         """
         Registra una compra tipo combo. items es una lista de diccionarios:
         [{'product_id': id, 'quantity': q, 'unit_cost': c, 'new_selling_price': sp}]
@@ -681,17 +695,22 @@ class DatabaseManager:
                     u_cost = item['unit_cost']
                     total_p_cost = qty * u_cost
                     n_price = item.get('new_selling_price')
-                    
+                    # Allocate shipping cost proportionally
+                    weight = (total_p_cost / total_cost) if total_cost > 0 else (1.0 / len(items))
+                    allocated_shipping = shipping_cost * weight
+                    actual_u_cost = u_cost + (allocated_shipping / qty) if qty > 0 else u_cost
+                    actual_total_p_cost = total_p_cost + allocated_shipping
+
                     cursor.execute("""
                         INSERT INTO purchases (
                             product_id, quantity, unit_cost, total_cost, supplier_id, 
                             payment_method, buyer_tag, is_return, origin_state,
                             purchase_type, delivery_date, delivery_status,
-                            combo_reference, combo_name, distribution_method
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (p_id, qty, u_cost, total_p_cost, supplier_id, payment_method, 
+                            combo_reference, combo_name, distribution_method, shipping_cost
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (p_id, qty, actual_u_cost, actual_total_p_cost, supplier_id, payment_method, 
                           buyer_tag, 0, origin_state, purchase_type, delivery_date, 
-                          delivery_status, combo_ref, combo_name, distribution_method))
+                          delivery_status, combo_ref, combo_name, distribution_method, allocated_shipping))
                     
                     # Stock
                     if delivery_status != 'Pendiente':
@@ -701,11 +720,11 @@ class DatabaseManager:
                     if n_price is not None and str(n_price).strip() != "":
                         try:
                             price_val = float(n_price)
-                            cursor.execute("UPDATE products SET cost_price = ?, selling_price = ? WHERE id = ?", (u_cost, price_val, p_id))
+                            cursor.execute("UPDATE products SET cost_price = ?, selling_price = ? WHERE id = ?", (actual_u_cost, price_val, p_id))
                         except ValueError:
-                            cursor.execute("UPDATE products SET cost_price = ? WHERE id = ?", (u_cost, p_id))
+                            cursor.execute("UPDATE products SET cost_price = ? WHERE id = ?", (actual_u_cost, p_id))
                     else:
-                        cursor.execute("UPDATE products SET cost_price = ? WHERE id = ?", (u_cost, p_id))
+                        cursor.execute("UPDATE products SET cost_price = ? WHERE id = ?", (actual_u_cost, p_id))
                         
                 conn.commit()
                 return combo_ref
@@ -1282,6 +1301,32 @@ class DatabaseManager:
                 """, (customer_id,))
                 return cursor.fetchall()
         except sqlite3.Error: return []
+
+    def get_purchase_history(self, product_id, purchase_mode=None):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT p.date, p.quantity, p.unit_cost, p.total_cost, s.name, p.buyer_tag, 
+                           p.purchase_type, p.delivery_status, p.combo_reference, p.combo_name
+                    FROM purchases p
+                    LEFT JOIN suppliers s ON p.supplier_id = s.id
+                    WHERE p.product_id = ? AND p.is_return = 0
+                """
+                params = [product_id]
+                
+                if purchase_mode == 'combo':
+                    query += " AND (p.combo_reference IS NOT NULL AND p.combo_reference != '')"
+                elif purchase_mode == 'individual':
+                    query += " AND (p.combo_reference IS NULL OR p.combo_reference = '')"
+                    
+                query += " ORDER BY p.date DESC"
+                
+                cursor.execute(query, params)
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Error al obtener historial de compras: {e}")
+            return []
 
 if __name__ == "__main__":
 

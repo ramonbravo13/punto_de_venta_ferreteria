@@ -53,10 +53,46 @@ class TicketPrinter:
             print(f"Error enumerando impresoras: {e}")
             return []
 
+    def _validate_printer_status(self, printer_name: str):
+        try:
+            printers = [printer[2] for printer in win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)]
+            if printer_name not in printers:
+                raise Exception(f"La impresora '{printer_name}' no existe o fue desinstalada de Windows.")
+
+            hprinter = win32print.OpenPrinter(printer_name)
+            try:
+                printer_info = win32print.GetPrinter(hprinter, 2)
+                status_code = printer_info['Status']
+                cjobs = printer_info['cJobs']
+
+                status_errors = []
+                if status_code & win32print.PRINTER_STATUS_ERROR: status_errors.append("En estado de Error")
+                if status_code & win32print.PRINTER_STATUS_PAPER_OUT: status_errors.append("Sin Papel")
+                if status_code & win32print.PRINTER_STATUS_PAPER_JAM: status_errors.append("Papel atascado")
+                if status_code & win32print.PRINTER_STATUS_DOOR_OPEN: status_errors.append("Tapa abierta")
+                if status_code & win32print.PRINTER_STATUS_OFFLINE: status_errors.append("Apagada / Fuera de línea")
+                if status_code & win32print.PRINTER_STATUS_NOT_AVAILABLE: status_errors.append("No disponible")
+                
+                if status_errors:
+                    errors_str = ", ".join(status_errors)
+                    raise Exception(f"La impresora reporta un problema físico o de conexión:\n• {errors_str}")
+
+                if cjobs > 5:
+                    raise Exception(f"La cola de impresión tiene {cjobs} trabajos atascados. Por favor, limpia la cola.")
+            finally:
+                win32print.ClosePrinter(hprinter)
+        except Exception as e:
+            if "acceso" in str(e).lower() or "denegado" in str(e).lower() or "denegó" in str(e).lower():
+                raise Exception(f"Windows denegó el acceso a la impresora '{printer_name}'. Detalles: {str(e)}")
+            else:
+                raise Exception(str(e))
+
     def print_raw_data(self, data: bytes):
         printer_name = self.config_manager.config.get("printer_name")
         if not printer_name:
             raise Exception("No hay impresora configurada.")
+            
+        self._validate_printer_status(printer_name)
             
         try:
             hPrinter = win32print.OpenPrinter(printer_name)

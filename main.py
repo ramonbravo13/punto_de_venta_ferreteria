@@ -41,9 +41,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Rios Tools")
         self.setWindowIcon(QIcon(resource_path("logo.jpg")))
-        self.resize(1024, 768)
+        self.resize(1280, 720)
         self.setStyleSheet(ui.STYLE_SHEET)
         self.setMinimumSize(1024, 768)
+        self.showMaximized()
         
         self.db = DatabaseManager()
         self.logic = BusinessLogic()
@@ -412,7 +413,7 @@ class MainWindow(QMainWindow):
             row_idx = self.inventory_table.rowCount()
             self.inventory_table.insertRow(row_idx)
             
-            p_id, img_path, sku, name, purchase_type, stock, cost, price, min_stock, tax_pct, incoming_stock, next_delivery = row_data
+            p_id, img_path, sku, name, purchase_type, stock, cost, price, min_stock, tax_pct, incoming_stock, next_delivery, marca, modelo, voltaje, combo_qty, indiv_qty = row_data
             
             # Cálculo de nuevos valores
             cost_with_tax = cost * (1 + tax_pct / 100.0)
@@ -432,12 +433,16 @@ class MainWindow(QMainWindow):
                 short_date = str(next_delivery)[:10] if next_delivery else "Pronto"
                 stock_text += f"\n(+{incoming_stock} para {short_date})"
 
-            # SKU, Producto, Categoría, Stock, Costo, Venta
+            # SKU, Producto, Marca, Modelo, Voltaje, Categoría/Tipo, Stock, Costo, Venta
             display_data = [
                 (str(sku), Qt.AlignmentFlag.AlignCenter),
                 (str(name), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-                (str(purchase_type), Qt.AlignmentFlag.AlignCenter),
+                (str(marca) if marca else "-", Qt.AlignmentFlag.AlignCenter),
+                (str(modelo) if modelo else "-", Qt.AlignmentFlag.AlignCenter),
+                (str(voltaje) if voltaje else "-", Qt.AlignmentFlag.AlignCenter),
                 (stock_text, Qt.AlignmentFlag.AlignCenter),
+                (f"{indiv_qty} 🔍", Qt.AlignmentFlag.AlignCenter),
+                (f"{combo_qty} 🔍", Qt.AlignmentFlag.AlignCenter),
                 (f"$ {cost:,.2f}", Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
                 (f"$ {cost_with_tax:,.2f}", Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
                 (f"$ {price:,.2f}", Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
@@ -457,20 +462,51 @@ class MainWindow(QMainWindow):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 
                 # Resaltar la celda de stock
-                if col == 4:
+                if col == 6:
                     item.setForeground(QBrush(stock_color))
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
+                    
+                # Indicador visual para las celdas de Historial
+                if col in (7, 8):
+                    font = item.font()
+                    font.setUnderline(True)
+                    item.setFont(font)
+                    item.setForeground(QBrush(QColor("#0EA5E9")))
+                    item.setData(Qt.ItemDataRole.UserRole, (p_id, name))
                 
                 self.inventory_table.setItem(row_idx, col, item)
             
             # 3. Columna de Acciones
             btn_edit = ui.TableActionButton("Editar")
             btn_edit.clicked.connect(lambda checked, pid=p_id: self.open_edit_product_dialog(pid))
-            self.inventory_table.setCellWidget(row_idx, 9, btn_edit)
+            self.inventory_table.setCellWidget(row_idx, 13, btn_edit)
         
         # Altura ya manejada por verticalHeader().setDefaultSectionSize(40)
+
+    def on_inventory_cell_clicked(self, row, column):
+        if column in (7, 8): # Indiv o Combo
+            item = self.inventory_table.item(row, column)
+            if item:
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if data:
+                    p_id, p_name = data
+                    mode = 'individual' if column == 7 else 'combo'
+                    dialog = PurchaseHistoryDialog(self, self.db, p_id, p_name, mode)
+                    dialog.exec()
+
+    def filter_inventory(self, text):
+        query = text.lower()
+        for row in range(self.inventory_table.rowCount()):
+            match = False
+            for col in [1, 2, 3, 4]: # SKU, Producto, Marca, Modelo
+                item = self.inventory_table.item(row, col)
+                if item and query in item.text().lower():
+                    match = True
+                    break
+            self.inventory_table.setRowHidden(row, not match)
+            
     def create_inventory(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -480,8 +516,9 @@ class MainWindow(QMainWindow):
         title = ui.QLabel("Inventario de Productos")
         title.setObjectName("Title")
         
-        search = ui.SearchField("Buscar por SKU o Nombre...")
+        search = ui.SearchField("Buscar por SKU, Nombre, Marca o Modelo...")
         search.setFixedWidth(300)
+        search.textChanged.connect(self.filter_inventory)
         
         btn_add = ui.PrimaryButton("+ Nuevo Producto")
         btn_add.clicked.connect(self.open_new_product_dialog)
@@ -498,17 +535,20 @@ class MainWindow(QMainWindow):
         layout.addLayout(top_layout)
         
         # Tabla Modernizada
-        self.inventory_table = QTableWidget(0, 10)
+        self.inventory_table = QTableWidget(0, 14)
         self.inventory_table.setHorizontalHeaderLabels([
-            "Imagen", "SKU", "Producto", "Tipo Compra", "Stock", "Costo", "Costo c/Imp.", "Venta", "Ganancia", "Acciones"
+            "Imagen", "SKU", "Producto", "Marca", "Modelo", "Voltaje", "Stock", "Individual", "Combo", "Costo", "Costo c/Imp.", "Venta", "Ganancia", "Acciones"
         ])
         header = self.inventory_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.inventory_table.setColumnWidth(0, 70)
         
+        self.inventory_table.setColumnWidth(0, 70)
+        
         self.inventory_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.inventory_table.itemDoubleClicked.connect(self.on_inventory_double_click)
+        self.inventory_table.cellClicked.connect(self.on_inventory_cell_clicked)
         layout.addWidget(self.inventory_table)
         
         return page
@@ -625,8 +665,13 @@ class MainWindow(QMainWindow):
             
         results = self.db.search_products(text, limit=15)
         suggestions = []
-        for sku, name, _, _, _ in results:
-            suggestions.append(f"{sku} | {name}")
+        for sku, name, _, _, _, marca, modelo in results:
+            clean_sku = sku if sku else ""
+            extra = []
+            if marca: extra.append(marca)
+            if modelo: extra.append(modelo)
+            extra_str = f" | {' '.join(extra)}" if extra else ""
+            suggestions.append(f"{clean_sku} | {name}{extra_str}")
             
         self.pos_product_completer_model.setStringList(suggestions)
         self.pos_product_completer.complete()
@@ -634,13 +679,21 @@ class MainWindow(QMainWindow):
     def on_pos_product_selected(self, text):
         if " | " not in text:
             return
-        sku = text.split(" | ")[0]
-        self.barcode_input.setText(sku)
+        parts = text.split(" | ")
+        sku = parts[0].strip()
+        name = parts[1].strip() if len(parts) > 1 else ""
+        
+        query = sku if sku else name
+        self.barcode_input.setText(query)
         self.add_to_cart()
 
     def add_to_cart(self):
-        query = self.barcode_input.text().strip()
-        if not query: return
+        raw_query = self.barcode_input.text().strip()
+        if not raw_query: return
+        query = raw_query.split(" | ")[0].strip() if " | " in raw_query else raw_query
+        if not query and " | " in raw_query:
+            parts = raw_query.split(" | ")
+            query = parts[1].strip() if len(parts) > 1 else raw_query
         
         product = self.db.get_product_by_sku_or_name(query)
         if product:
@@ -658,7 +711,8 @@ class MainWindow(QMainWindow):
                 self.cart_items.append((p_id, real_sku, p_name, 1, price))
             
             self.update_cart_table()
-            self.barcode_input.clear()
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self.barcode_input.clear)
             self.barcode_input.setFocus()
         else:
             QMessageBox.warning(self, "No Encontrado", f"No se encontró ningún producto con: '{query}'")
@@ -888,7 +942,23 @@ class MainWindow(QMainWindow):
         self.compra_delivery_date.setDate(datetime.now().date())
         self.compra_delivery_date.setEnabled(False)
         self.compra_delivery_date.setMinimumHeight(40)
-        self.compra_type.currentTextChanged.connect(lambda text: self.compra_delivery_date.setEnabled(text == "En Línea"))
+        
+        self.compra_shipping_cost = ui.QLineEdit()
+        self.compra_shipping_cost.setPlaceholderText("Costo de envío ($)")
+        self.compra_shipping_cost.setText("0.00")
+        self.compra_shipping_cost.setEnabled(False)
+        self.compra_shipping_cost.setMinimumHeight(40)
+        self.compra_shipping_cost.textChanged.connect(self.update_compra_totals)
+        
+        def on_compra_type_changed(text):
+            is_online = (text == "En Línea")
+            self.compra_delivery_date.setEnabled(is_online)
+            self.compra_shipping_cost.setEnabled(is_online)
+            if not is_online:
+                self.compra_delivery_date.setDate(datetime.now().date())
+                self.compra_shipping_cost.setText("0.00")
+                
+        self.compra_type.currentTextChanged.connect(on_compra_type_changed)
 
         self.compra_selling_price = ui.QLineEdit()
         self.compra_selling_price.setPlaceholderText("Nuevo precio de venta...")
@@ -902,6 +972,7 @@ class MainWindow(QMainWindow):
         prod_form.addRow("Ganancia (%):", self.compra_profit_pct)
         prod_form.addRow("Estado Origen:", self.compra_origin_state)
         prod_form.addRow("Tipo de Compra:", self.compra_type)
+        prod_form.addRow("Costo Envío ($):", self.compra_shipping_cost)
         prod_form.addRow("Estimado de Entrega:", self.compra_delivery_date)
 
         # Precio Sugerido y Botón Aplicar
@@ -1002,27 +1073,15 @@ class MainWindow(QMainWindow):
         def on_payment_mode_change():
             is_card = self.payment_mode.currentText() == "Tarjeta de Crédito"
             self.card_selector.setEnabled(is_card)
-            self.is_paid.setEnabled(is_card)
-            self.is_return.setEnabled(is_card)
             
             if not is_card:
-                # Para Efectivo, forzar valores por defecto y deshabilitar controles de crédito
-                self.is_paid.setChecked(True)
-                self.due_date_edit.setEnabled(False)
-                self.is_return.setChecked(False)
                 self.card_selector.setCurrentIndex(-1)
-            else:
-                # Para Tarjeta, la fecha límite depende de si está pagado o no
-                self.due_date_edit.setEnabled(not self.is_paid.isChecked())
 
         self.payment_mode.currentTextChanged.connect(on_payment_mode_change)
         
         def on_paid_change():
-            # La fecha límite solo tiene sentido si NO se ha pagado aún (compras a crédito)
-            if self.payment_mode.currentText() == "Tarjeta de Crédito":
-                self.due_date_edit.setEnabled(not self.is_paid.isChecked())
-            else:
-                self.due_date_edit.setEnabled(False)
+            # Habilitar fecha de vencimiento si la compra es a crédito (no pagada)
+            self.due_date_edit.setEnabled(not self.is_paid.isChecked())
 
         self.is_paid.stateChanged.connect(on_paid_change)
 
@@ -1101,11 +1160,38 @@ class MainWindow(QMainWindow):
         self.combo_type = QComboBox()
         self.combo_type.addItems(["Física", "En Línea"])
         self.combo_type.setMinimumHeight(40)
+        
+        from PyQt6.QtWidgets import QDateEdit
+        from datetime import datetime
+        self.combo_delivery_date = QDateEdit()
+        self.combo_delivery_date.setCalendarPopup(True)
+        self.combo_delivery_date.setDate(datetime.now().date())
+        self.combo_delivery_date.setEnabled(False)
+        self.combo_delivery_date.setMinimumHeight(40)
+        
+        self.combo_shipping_cost = ui.QLineEdit()
+        self.combo_shipping_cost.setPlaceholderText("Costo Envío ($)")
+        self.combo_shipping_cost.setText("0.00")
+        self.combo_shipping_cost.setEnabled(False)
+        self.combo_shipping_cost.setMinimumHeight(40)
+        self.combo_shipping_cost.textChanged.connect(self.update_combo_table_calculations)
+        
+        def on_combo_type_changed(text):
+            is_online = (text == "En Línea")
+            self.combo_delivery_date.setEnabled(is_online)
+            self.combo_shipping_cost.setEnabled(is_online)
+            if not is_online:
+                self.combo_delivery_date.setDate(datetime.now().date())
+                self.combo_shipping_cost.setText("0.00")
+                
+        self.combo_type.currentTextChanged.connect(on_combo_type_changed)
 
         form_trans.addRow("Proveedor:", self.combo_supplier)
         form_trans.addRow("Responsable:", self.combo_responsible)
         form_trans.addRow("Método Pago:", self.combo_payment_mode)
         form_trans.addRow("Tipo Compra:", self.combo_type)
+        form_trans.addRow("Costo Envío ($):", self.combo_shipping_cost)
+        form_trans.addRow("Est. Entrega:", self.combo_delivery_date)
 
         trans_layout.addLayout(form_trans)
         trans_layout.addStretch()
@@ -1143,13 +1229,19 @@ class MainWindow(QMainWindow):
         self.combo_product_search.textEdited.connect(self.on_combo_product_text_edited)
         self.combo_product_completer.activated.connect(self.on_combo_product_selected)
         
-        self.btn_combo_new_product = ui.PrimaryButton("+ Nuevo")
-        self.btn_combo_new_product.setFixedWidth(100)
+        self.btn_combo_add_product = ui.PrimaryButton("Añadir al Paquete")
+        self.btn_combo_add_product.setFixedWidth(150)
+        self.btn_combo_add_product.setMinimumHeight(45)
+        self.btn_combo_add_product.clicked.connect(self.add_product_to_combo)
+
+        self.btn_combo_new_product = ui.PrimaryButton("+ Crear Producto")
+        self.btn_combo_new_product.setFixedWidth(150)
         self.btn_combo_new_product.setMinimumHeight(45)
         self.btn_combo_new_product.clicked.connect(self.combo_create_new_product)
         
         search_box.addWidget(search_label)
         search_box.addWidget(self.combo_product_search)
+        search_box.addWidget(self.btn_combo_add_product)
         search_box.addWidget(self.btn_combo_new_product)
         items_layout.addLayout(search_box)
         items_layout.addSpacing(10)
@@ -1223,10 +1315,24 @@ class MainWindow(QMainWindow):
         self.update_combo_table_calculations()
 
     def add_product_to_combo(self):
-        query = self.combo_product_search.text().strip()
-        if not query: return
+        raw_query = self.combo_product_search.text().strip()
+        if not raw_query: return
+        query = raw_query.split(" | ")[0].strip() if " | " in raw_query else raw_query
+        if not query and " | " in raw_query:
+            parts = raw_query.split(" | ")
+            query = parts[1].strip() if len(parts) > 1 else raw_query
         p = self.db.get_product_by_sku_or_name(query)
         if p:
+            for row in range(self.combo_table.rowCount()):
+                if self.combo_table.item(row, 0).text() == str(p[0]):
+                    qty_item = self.combo_table.item(row, 3)
+                    new_qty = int(qty_item.text()) + 1
+                    qty_item.setText(str(new_qty))
+                    self.update_combo_table_calculations()
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, self.combo_product_search.clear)
+                    return
+
             self.combo_items.append((p[0], p[4], p[1]))
             row = self.combo_table.rowCount()
             self.combo_table.blockSignals(True)
@@ -1251,7 +1357,8 @@ class MainWindow(QMainWindow):
             
             self.combo_table.blockSignals(False)
             self.update_combo_table_calculations()
-            self.combo_product_search.clear()
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self.combo_product_search.clear)
         else:
             reply = QMessageBox.question(
                 self, 
@@ -1310,6 +1417,9 @@ class MainWindow(QMainWindow):
         try: total_cost = float(self.combo_total_cost.text())
         except ValueError: total_cost = 0.0
         
+        try: shipping_cost = float(self.combo_shipping_cost.text())
+        except ValueError: shipping_cost = 0.0
+        
         method = self.combo_method.currentText()
         rows = self.combo_table.rowCount()
         
@@ -1353,6 +1463,8 @@ class MainWindow(QMainWindow):
             if method == "Equitativa":
                 if sum_qty > 0:
                     cost_per_piece = total_cost / sum_qty
+                    weight = (1.0 / sum_qty)
+                    cost_per_piece += (shipping_cost * weight)
                     cost = cost_per_piece
                 self.combo_table.item(r, 4).setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled) # Lock %
                 self.combo_table.item(r, 4).setText("0")
@@ -1362,7 +1474,9 @@ class MainWindow(QMainWindow):
                 except: pct = 0.0
                 
                 if qty > 0:
-                    cost = (total_cost * (pct / 100.0)) / qty
+                    base_total_p = total_cost * (pct / 100.0)
+                    weight = (base_total_p / total_cost) if total_cost > 0 else (1.0 / rows if rows > 0 else 0)
+                    cost = (base_total_p + (shipping_cost * weight)) / qty
                 
                 # Highlight if manual sum is wrong
                 if abs(sum_pct - 100.0) > 0.01:
@@ -1375,6 +1489,8 @@ class MainWindow(QMainWindow):
         name = self.combo_name.text().strip()
         try: total_cost = float(self.combo_total_cost.text())
         except: total_cost = 0.0
+        try: shipping_cost = float(self.combo_shipping_cost.text())
+        except: shipping_cost = 0.0
         method = self.combo_method.currentText()
         
         if not name or total_cost <= 0:
@@ -1422,12 +1538,14 @@ class MainWindow(QMainWindow):
         state = "TX" 
         p_type = self.combo_type.currentText()
         d_status = "Entregado" if p_type == "Física" else "Pendiente"
+        d_date = None if p_type == "Física" else self.combo_delivery_date.date().toString("yyyy-MM-dd")
         
-        ref = self.db.add_combo_purchase(name, total_cost, method, items_db, supplier_id, pay_mode, buyer, state, p_type, None, d_status)
+        ref = self.db.add_combo_purchase(name, total_cost, method, items_db, supplier_id, pay_mode, buyer, state, p_type, d_date, d_status, shipping_cost)
         if ref:
             QMessageBox.information(self, "Éxito", f"Combo '{name}' registrado con éxito.")
             self.combo_name.clear()
             self.combo_total_cost.clear()
+            self.combo_shipping_cost.setText("0.00")
             self.combo_table.setRowCount(0)
             self.combo_items = []
             self.load_inventory_data()
@@ -1443,15 +1561,20 @@ class MainWindow(QMainWindow):
             cost = float(self.compra_cost.text()) if self.compra_cost.text() else 0.0
             tax_pct = float(self.compra_tax.text()) if self.compra_tax.text() else 0.0
             profit_pct = float(self.compra_profit_pct.text()) if self.compra_profit_pct.text() else 0.0
+            try: shipping_cost = float(self.compra_shipping_cost.text()) if self.compra_shipping_cost.text() else 0.0
+            except: shipping_cost = 0.0
             
             # 1. Costo Total (Inversión)
             base = qty * cost
-            total = base * (1 + tax_pct / 100.0)
+            total = base * (1 + tax_pct / 100.0) + shipping_cost
             self.lbl_compra_total.setText(f"Costo Total: $ {total:,.2f}")
+            
+            # Costo unitario real
+            actual_unit_cost = (total / qty) if qty > 0 else cost
 
             # 2. Precio Sugerido (Venta)
-            # Sugerido = Costo + (Costo * Impuesto%) + (Costo * Ganancia%)
-            suggested = cost * (1 + (tax_pct + profit_pct) / 100.0)
+            # Sugerido = Costo Real + (Costo Real * Ganancia%)
+            suggested = actual_unit_cost * (1 + profit_pct / 100.0)
             self.lbl_suggested_price.setText(f"Sug: $ {suggested:,.2f}")
             
         except ValueError:
@@ -1471,7 +1594,11 @@ class MainWindow(QMainWindow):
             pass
 
     def register_purchase(self):
-        query = self.compra_product.text().strip()
+        raw_query = self.compra_product.text().strip()
+        query = raw_query.split(" | ")[0].strip() if " | " in raw_query else raw_query
+        if not query and " | " in raw_query:
+            parts = raw_query.split(" | ")
+            query = parts[1].strip() if len(parts) > 1 else raw_query
         qty_text = self.compra_qty.text().strip()
         cost_text = self.compra_cost.text().strip()
         
@@ -1528,17 +1655,21 @@ class MainWindow(QMainWindow):
             p_type = self.compra_type.currentText()
             d_date = self.compra_delivery_date.date().toString("yyyy-MM-dd") if p_type == "En Línea" else None
             d_status = "Pendiente" if p_type == "En Línea" else "Entregado"
+            try: s_cost = float(self.compra_shipping_cost.text())
+            except: s_cost = 0.0
             
             if self.db.add_purchase(p_id, qty, cost, supplier_idx, method, responsible, 
                                    is_return=is_ret, card_name=card, is_paid=status, 
                                    due_date=due, origin_state=origin_state, 
                                    tax_percentage=tax_pct, new_selling_price=new_price,
-                                   purchase_type=p_type, delivery_date=d_date, delivery_status=d_status):
+                                   purchase_type=p_type, delivery_date=d_date, delivery_status=d_status,
+                                   shipping_cost=s_cost):
                 QMessageBox.information(self, "Éxito", f"Compra registrada para {p_name}.")
                 self.update_dashboard_data()
                 self.load_inventory_data()
                 # Limpiar campos
-                self.compra_product.clear()
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, self.compra_product.clear)
                 self.compra_qty.clear()
                 self.compra_cost.clear()
                 self.compra_tax.setText("0")
@@ -1558,8 +1689,13 @@ class MainWindow(QMainWindow):
             
         results = self.db.search_products(text, limit=15)
         suggestions = []
-        for sku, name, _, _, _ in results:
-            suggestions.append(f"{sku} | {name}")
+        for sku, name, _, _, _, marca, modelo in results:
+            clean_sku = sku if sku else ""
+            extra = []
+            if marca: extra.append(marca)
+            if modelo: extra.append(modelo)
+            extra_str = f" | {' '.join(extra)}" if extra else ""
+            suggestions.append(f"{clean_sku} | {name}{extra_str}")
             
         self.compra_product_completer_model.setStringList(suggestions)
         self.compra_product_completer.complete()
@@ -1568,8 +1704,12 @@ class MainWindow(QMainWindow):
         if " | " not in text:
             return
             
-        sku = text.split(" | ")[0]
-        product = self.db.get_product_by_sku_or_name(sku)
+        parts = text.split(" | ")
+        sku = parts[0].strip()
+        name = parts[1].strip() if len(parts) > 1 else ""
+        
+        query = sku if sku else name
+        product = self.db.get_product_by_sku_or_name(query)
         
         if product:
             p_id, p_name, cost, selling_price, actual_sku = product
@@ -1586,8 +1726,9 @@ class MainWindow(QMainWindow):
             except:
                 pass
 
+            display_text = str(actual_sku) if actual_sku else str(p_name)
             self.compra_product.blockSignals(True)
-            self.compra_product.setText(actual_sku)
+            self.compra_product.setText(display_text)
             self.compra_product.blockSignals(False)
             
             self.compra_qty.setText("1")
@@ -1605,8 +1746,13 @@ class MainWindow(QMainWindow):
             
         results = self.db.search_products(text, limit=15)
         suggestions = []
-        for sku, name, _, _, _ in results:
-            suggestions.append(f"{sku} | {name}")
+        for sku, name, _, _, _, marca, modelo in results:
+            clean_sku = sku if sku else ""
+            extra = []
+            if marca: extra.append(marca)
+            if modelo: extra.append(modelo)
+            extra_str = f" | {' '.join(extra)}" if extra else ""
+            suggestions.append(f"{clean_sku} | {name}{extra_str}")
             
         self.combo_product_completer_model.setStringList(suggestions)
         self.combo_product_completer.complete()
@@ -1614,8 +1760,12 @@ class MainWindow(QMainWindow):
     def on_combo_product_selected(self, text):
         if " | " not in text:
             return
-        sku = text.split(" | ")[0]
-        self.combo_product_search.setText(sku)
+        parts = text.split(" | ")
+        sku = parts[0].strip()
+        name = parts[1].strip() if len(parts) > 1 else ""
+        
+        query = sku if sku else name
+        self.combo_product_search.setText(query)
         self.add_product_to_combo()
 
     def handle_compra_scan(self):
@@ -1641,7 +1791,8 @@ class MainWindow(QMainWindow):
                 if self.db.add_purchase(p_id, qty, cost, supplier_idx, "Cash", responsible):
                     self.load_inventory_data()
                     self.update_dashboard_data()
-                    self.compra_product.clear()
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, self.compra_product.clear)
                     # Feedback visual breve en la barra de estado si existiera, o simple limpieza
                 else:
                     QMessageBox.warning(self, "Error", "Error al registrar la entrada rápida.")
@@ -1957,7 +2108,7 @@ class MainWindow(QMainWindow):
         
         btn_test = ui.PrimaryButton("Impresión de Prueba")
         btn_test.setObjectName("Secondary")
-        btn_test.clicked.connect(lambda: printer.imprimir_ticket_prueba_sync())
+        btn_test.clicked.connect(self.print_test_ticket)
         
         layout.addRow("Impresora:", self.combo_ticket_printers)
         layout.addRow("Ancho de papel (mm):", self.combo_paper)
@@ -1983,6 +2134,16 @@ class MainWindow(QMainWindow):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"No se pudo guardar la configuración: {e}")
 
+    def print_test_ticket(self):
+        try:
+            from ticket_printer import printer
+            printer.imprimir_ticket_prueba_sync()
+            QMessageBox.information(self, "Éxito", "Comando de prueba enviado correctamente a la impresora de tickets.\n\nSi no sale nada, asegúrate de que esté encendida y seleccionada correctamente.")
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            QMessageBox.critical(self, "Error de Impresión", f"No se pudo imprimir el ticket de prueba.\n\nFallo detectado:\n{e}\n\nDetalles técnicos:\n{error_details}")
+
     def create_printer_config(self):
         from printing.printer_config import PrinterConfig
         self.printer_config = PrinterConfig()
@@ -2004,17 +2165,10 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.combo_printers.setCurrentIndex(index)
             
-        self.combo_connection = QComboBox()
-        self.combo_connection.addItems(["windows", "serial", "bluetooth"])
-        index = self.combo_connection.findText(self.printer_config.connection_type)
-        if index >= 0:
-            self.combo_connection.setCurrentIndex(index)
-            
-        self.input_com_port = ui.SearchField("COM1")
-        self.input_com_port.setText(str(self.printer_config.com_port))
-        
-        self.input_baud_rate = ui.SearchField("9600")
-        self.input_baud_rate.setText(str(self.printer_config.baud_rate))
+        # Campos de conexión ocultos/precargados
+        # self.combo_connection = QComboBox()
+        # self.input_com_port = ui.SearchField("COM1")
+        # self.input_baud_rate = ui.SearchField("9600")
             
         self.input_width = ui.SearchField("58")
         self.input_width.setText(str(self.printer_config.label_width_mm))
@@ -2042,9 +2196,6 @@ class MainWindow(QMainWindow):
         btn_test.clicked.connect(self.print_test_label)
         
         layout.addRow("Impresora:", self.combo_printers)
-        layout.addRow("Tipo de Conexión:", self.combo_connection)
-        layout.addRow("Puerto COM (Serial/BT):", self.input_com_port)
-        layout.addRow("Baud Rate:", self.input_baud_rate)
         layout.addRow("Ancho (mm):", self.input_width)
         layout.addRow("Alto (mm):", self.input_height)
         layout.addRow("DPI:", self.input_dpi)
@@ -2060,7 +2211,10 @@ class MainWindow(QMainWindow):
     def save_printer_config(self):
         try:
             self.printer_config.printer_name = self.combo_printers.currentText()
-            self.printer_config.connection_type = self.combo_connection.currentText()
+            self.printer_config.connection_type = "windows"
+            self.printer_config.com_port = "COM1"
+            self.printer_config.baud_rate = 9600
+            
             self.printer_config.label_width_mm = float(self.input_width.text())
             self.printer_config.label_height_mm = float(self.input_height.text())
             self.printer_config.dpi = int(self.input_dpi.text())
@@ -2068,8 +2222,7 @@ class MainWindow(QMainWindow):
             self.printer_config.margin_right_mm = float(self.input_mr.text())
             self.printer_config.margin_top_mm = float(self.input_mt.text())
             self.printer_config.margin_bottom_mm = float(self.input_mb.text())
-            self.printer_config.com_port = self.input_com_port.text().strip()
-            self.printer_config.baud_rate = int(self.input_baud_rate.text())
+            
             self.printer_config.save()
             QMessageBox.information(self, "Éxito", "Configuración de impresora guardada correctamente.")
         except ValueError:
@@ -2080,8 +2233,11 @@ class MainWindow(QMainWindow):
             from printing.thermal_printer import ThermalLabelPrinter
             printer = ThermalLabelPrinter()
             printer.print_test_label()
+            QMessageBox.information(self, "Éxito", "Comando de prueba enviado correctamente a la impresora de etiquetas.\n\nSi no sale nada, asegúrate de que esté encendida y seleccionada correctamente.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al imprimir: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            QMessageBox.critical(self, "Error de Impresión", f"No se pudo imprimir la etiqueta de prueba.\n\nFallo detectado:\n{e}\n\nDetalles técnicos:\n{error_details}")
 
     def create_database_config(self):
         widget = QWidget()
@@ -2904,10 +3060,12 @@ class CustomPrintPreviewDialog(QDialog):
     def do_print(self):
         try:
             self.printer.print_product_label(self.name, self.sku, self.price)
-            QMessageBox.information(self, "Éxito", "Etiqueta enviada a impresión.")
+            QMessageBox.information(self, "Éxito", "Etiqueta impresa correctamente.")
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al imprimir: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            QMessageBox.critical(self, "Error de Impresión", f"Fallo detectado al intentar imprimir.\n\nError: {e}\n\nDetalles:\n{error_details}")
 
 
 class NewProductDialog(QDialog):
@@ -3584,6 +3742,68 @@ class DebtDetailDialog(QDialog):
             else:
                 QMessageBox.critical(self, "Error", "No se pudo revertir el estado de la deuda.")
 
+
+class PurchaseHistoryDialog(QDialog):
+    def __init__(self, parent, db, product_id, product_name, mode):
+        super().__init__(parent)
+        self.db = db
+        self.product_id = product_id
+        self.product_name = product_name
+        self.mode = mode
+        
+        mode_str = "Individual" if mode == 'individual' else "Combo"
+        self.setWindowTitle(f"Historial de Compras ({mode_str}) - {product_name}")
+        self.resize(900, 400)
+        self.setup_ui()
+        self.load_data()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        mode_str = "Individual" if self.mode == 'individual' else "Combo"
+        lbl_title = ui.QLabel(f"Historial de Compras ({mode_str}): {self.product_name}")
+        lbl_title.setObjectName("Title")
+        layout.addWidget(lbl_title)
+        
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels([
+            "Fecha", "Cantidad", "Costo Unit.", "Costo Total", "Proveedor", "Responsable", "Tipo", "Estado", "Ref. Combo"
+        ])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.table)
+        
+        btn_close = ui.PrimaryButton("Cerrar")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
+
+    def load_data(self):
+        history = self.db.get_purchase_history(self.product_id, self.mode)
+        self.table.setRowCount(0)
+        for row_data in history:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            date, qty, unit_cost, total_cost, supplier, buyer, p_type, status, combo_ref, combo_name = row_data
+            
+            ref_str = f"{combo_name} ({combo_ref})" if combo_name else (combo_ref if combo_ref else "-")
+            
+            self.table.setItem(row, 0, QTableWidgetItem(str(date)[:16]))
+            
+            qty_item = QTableWidgetItem(str(qty))
+            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 1, qty_item)
+            
+            self.table.setItem(row, 2, QTableWidgetItem(f"$ {unit_cost:,.2f}"))
+            self.table.setItem(row, 3, QTableWidgetItem(f"$ {total_cost:,.2f}"))
+            self.table.setItem(row, 4, QTableWidgetItem(str(supplier or "N/A")))
+            self.table.setItem(row, 5, QTableWidgetItem(str(buyer or "-")))
+            self.table.setItem(row, 6, QTableWidgetItem(str(p_type or "-")))
+            self.table.setItem(row, 7, QTableWidgetItem(str(status or "-")))
+            self.table.setItem(row, 8, QTableWidgetItem(ref_str))
 
 class ProfitDetailDialog(QDialog):
     def __init__(self, parent=None):

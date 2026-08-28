@@ -36,14 +36,14 @@ class LabelRenderer:
         draw.text((self.width_px / 2, y), name[:22], font=font_title, fill=0, anchor="mt")
         
         bbox = draw.textbbox((self.width_px / 2, y), name[:22], font=font_title, anchor="mt")
-        y = bbox[3] + 10
+        y = bbox[3] + 15
         
         if price is not None:
             font_price = self.get_font(22, bold=True)
             price_str = f"${price:,.2f}"
             draw.text((self.width_px / 2, y), price_str, font=font_price, fill=0, anchor="mt")
             bbox_price = draw.textbbox((self.width_px / 2, y), price_str, font=font_price, anchor="mt")
-            y = bbox_price[3] + 10
+            y = bbox_price[3] + 30
             
         # Altura restante para el código de barras
         available_height = self.height_px - self.margin_bottom_px - y
