@@ -20,10 +20,12 @@ class PrinterConfig:
         self.load()
         
     def load(self):
+        self._raw_data = {}
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    self._raw_data = data.copy()
                     self.printer_name = data.get("printer_name", self.printer_name)
                     self.connection_type = data.get("connection_type", self.connection_type)
                     self.label_width_mm = data.get("label_width_mm", self.label_width_mm)
@@ -39,7 +41,8 @@ class PrinterConfig:
                 print(f"Error loading printer config: {e}")
 
     def save(self):
-        data = {
+        data = getattr(self, '_raw_data', {})
+        data.update({
             "printer_name": self.printer_name,
             "connection_type": self.connection_type,
             "label_width_mm": self.label_width_mm,
@@ -51,7 +54,7 @@ class PrinterConfig:
             "margin_bottom_mm": self.margin_bottom_mm,
             "com_port": self.com_port,
             "baud_rate": self.baud_rate
-        }
+        })
         try:
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)

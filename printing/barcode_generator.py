@@ -21,7 +21,8 @@ class BarcodeGenerator:
             'module_height': 12.0,
             'font_size': 12,
             'text_distance': 4,
-            'quiet_zone': 3
+            'quiet_zone': 3,
+            'font_path': 'arial.ttf'
         }
         
         # En ean13, si se pasa un string de 12 dígitos, la librería calcula el checksum (13) automáticamente

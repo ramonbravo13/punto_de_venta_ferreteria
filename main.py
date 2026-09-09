@@ -629,11 +629,11 @@ class MainWindow(QMainWindow):
         customer_layout.addWidget(btn_new_customer)
         right_layout.addLayout(customer_layout)
         
-        right_layout.addWidget(ui.QLabel("Descuento Aplicado (%):"))
-        self.pos_discount = QComboBox()
+        right_layout.addWidget(ui.QLabel("Descuento Aplicado ($):"))
+        self.pos_discount = ui.QLineEdit()
+        self.pos_discount.setPlaceholderText("0.00")
         self.pos_discount.setMinimumHeight(35)
-        self.pos_discount.addItems(["0%", "5%", "10%", "15%", "20%"])
-        self.pos_discount.currentIndexChanged.connect(self.update_cart_table)
+        self.pos_discount.textChanged.connect(self.update_cart_table)
         right_layout.addWidget(self.pos_discount)
         
         right_layout.addSpacing(20)
@@ -741,13 +741,12 @@ class MainWindow(QMainWindow):
                 item.setTextAlignment(align)
                 self.sale_table.setItem(row, col, item)
             
-        discount_pct = 0
+        discount = 0.0
         try:
-            discount_pct = int(self.pos_discount.currentText().replace('%', ''))
+            if self.pos_discount.text().strip():
+                discount = float(self.pos_discount.text().strip())
         except ValueError:
             pass
-            
-        discount = total * (discount_pct / 100.0)
         final_total = max(0, total - discount)
         self.total_val.setText(f"$ {final_total:,.2f}")
 
@@ -755,7 +754,7 @@ class MainWindow(QMainWindow):
         self.cart_items = []
         self.update_cart_table()
         self.barcode_input.clear()
-        self.pos_discount.setCurrentIndex(0)
+        self.pos_discount.clear()
         self.pos_customer.clear()
 
     def process_sale(self):
@@ -770,13 +769,12 @@ class MainWindow(QMainWindow):
             
         caja_id = open_caja[0]
         subtotal = sum(item[3] * item[4] for item in self.cart_items)
-        discount_pct = 0
+        discount = 0.0
         try:
-            discount_pct = int(self.pos_discount.currentText().replace('%', ''))
+            if self.pos_discount.text().strip():
+                discount = float(self.pos_discount.text().strip())
         except ValueError:
             pass
-            
-        discount = subtotal * (discount_pct / 100.0)
         total = max(0, subtotal - discount)
         
         # 2. Diálogo de Pago
@@ -852,11 +850,20 @@ class MainWindow(QMainWindow):
         self.quick_mode = QCheckBox("Modo Entrada Rápida (Escáner)")
         self.quick_mode.setStyleSheet("color: #0EA5E9; font-weight: bold; font-size: 11pt;")
         
+        btn_add = ui.PrimaryButton("+ Nuevo Producto")
+        btn_add.clicked.connect(self.open_new_product_dialog)
+        
+        btn_pending = ui.PrimaryButton("📦 Pedidos Pendientes")
+        btn_pending.setObjectName("Secondary")
+        btn_pending.clicked.connect(self.open_pending_orders)
+
         header_layout.addWidget(title)
         header_layout.addSpacing(20)
         header_layout.addWidget(self.compra_mode)
         header_layout.addStretch()
         header_layout.addWidget(self.quick_mode)
+        header_layout.addWidget(btn_pending)
+        header_layout.addWidget(btn_add)
         layout.addLayout(header_layout)
         
         # --- Stack para Modos ---
@@ -940,25 +947,55 @@ class MainWindow(QMainWindow):
         self.compra_delivery_date = QDateEdit()
         self.compra_delivery_date.setCalendarPopup(True)
         self.compra_delivery_date.setDate(datetime.now().date())
-        self.compra_delivery_date.setEnabled(False)
         self.compra_delivery_date.setMinimumHeight(40)
         
         self.compra_shipping_cost = ui.QLineEdit()
         self.compra_shipping_cost.setPlaceholderText("Costo de envío ($)")
         self.compra_shipping_cost.setText("0.00")
-        self.compra_shipping_cost.setEnabled(False)
         self.compra_shipping_cost.setMinimumHeight(40)
         self.compra_shipping_cost.textChanged.connect(self.update_compra_totals)
         
+        orig_compra_date_mp = self.compra_delivery_date.mousePressEvent
+        orig_compra_ship_mp = self.compra_shipping_cost.mousePressEvent
+        
+        def handle_compra_date_mp(event):
+            if self.compra_type.currentText() == "Física":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "El estimado de entrega no aplica para compras físicas.")
+            else:
+                orig_compra_date_mp(event)
+                
+        def handle_compra_ship_mp(event):
+            if self.compra_type.currentText() == "Física":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "El costo de envío no aplica para compras físicas.")
+            else:
+                orig_compra_ship_mp(event)
+                
+        self.compra_delivery_date.mousePressEvent = handle_compra_date_mp
+        self.compra_shipping_cost.mousePressEvent = handle_compra_ship_mp
+        
         def on_compra_type_changed(text):
             is_online = (text == "En Línea")
-            self.compra_delivery_date.setEnabled(is_online)
-            self.compra_shipping_cost.setEnabled(is_online)
-            if not is_online:
+            if is_online:
+                self.compra_delivery_date.setReadOnly(False)
+                self.compra_delivery_date.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
+                self.compra_delivery_date.setStyleSheet("")
+                self.compra_shipping_cost.setReadOnly(False)
+                self.compra_shipping_cost.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                self.compra_shipping_cost.setStyleSheet("")
+            else:
                 self.compra_delivery_date.setDate(datetime.now().date())
                 self.compra_shipping_cost.setText("0.00")
+                self.compra_delivery_date.setReadOnly(True)
+                self.compra_delivery_date.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.compra_delivery_date.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
+                self.compra_shipping_cost.setReadOnly(True)
+                self.compra_shipping_cost.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.compra_shipping_cost.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
                 
         self.compra_type.currentTextChanged.connect(on_compra_type_changed)
+        on_compra_type_changed(self.compra_type.currentText())
 
         self.compra_selling_price = ui.QLineEdit()
         self.compra_selling_price.setPlaceholderText("Nuevo precio de venta...")
@@ -1070,23 +1107,67 @@ class MainWindow(QMainWindow):
         )
         
         # Conexiones Lógicas para una experiencia más fluida
-        def on_payment_mode_change():
-            is_card = self.payment_mode.currentText() == "Tarjeta de Crédito"
-            self.card_selector.setEnabled(is_card)
-            
-            if not is_card:
-                self.card_selector.setCurrentIndex(-1)
-
-        self.payment_mode.currentTextChanged.connect(on_payment_mode_change)
+        orig_card_mp = self.card_selector.mousePressEvent
+        orig_card_sp = self.card_selector.showPopup
+        orig_due_date_mp = self.due_date_edit.mousePressEvent
         
-        def on_paid_change():
-            # Habilitar fecha de vencimiento si la compra es a crédito (no pagada)
-            self.due_date_edit.setEnabled(not self.is_paid.isChecked())
+        def handle_card_mp(event):
+            if self.payment_mode.currentText() == "Efectivo":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "La selección de tarjeta no aplica para pagos en efectivo.")
+            else:
+                orig_card_mp(event)
+                
+        def handle_card_sp():
+            if self.payment_mode.currentText() == "Efectivo":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "La selección de tarjeta no aplica para pagos en efectivo.")
+            else:
+                orig_card_sp()
+                
+        def handle_due_date_mp(event):
+            if self.payment_mode.currentText() == "Efectivo":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "La fecha límite de pago no aplica para pagos en efectivo.")
+            elif self.is_paid.isChecked():
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "La fecha límite de pago no aplica si está marcado como pagado.")
+            else:
+                orig_due_date_mp(event)
 
-        self.is_paid.stateChanged.connect(on_paid_change)
+        self.card_selector.mousePressEvent = handle_card_mp
+        self.card_selector.showPopup = handle_card_sp
+        self.due_date_edit.mousePressEvent = handle_due_date_mp
+
+        def update_payment_fields(*args):
+            is_card = self.payment_mode.currentText() == "Tarjeta de Crédito"
+            is_paid = self.is_paid.isChecked()
+            
+            if is_card:
+                self.card_selector.setEnabled(True)
+                self.card_selector.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
+                self.card_selector.setStyleSheet("")
+            else:
+                self.card_selector.setCurrentIndex(-1)
+                self.card_selector.setEnabled(True) 
+                self.card_selector.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.card_selector.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
+                
+            # Allow due date if NOT paid and NOT Efectivo (assuming Efectivo doesn't have a due date per user request)
+            if not is_paid and self.payment_mode.currentText() != "Efectivo":
+                self.due_date_edit.setReadOnly(False)
+                self.due_date_edit.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
+                self.due_date_edit.setStyleSheet("")
+            else:
+                self.due_date_edit.setReadOnly(True)
+                self.due_date_edit.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.due_date_edit.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
+
+        self.payment_mode.currentTextChanged.connect(update_payment_fields)
+        self.is_paid.stateChanged.connect(update_payment_fields)
 
         # Inicializar estado
-        on_payment_mode_change()
+        update_payment_fields()
 
         scroll.setWidget(page)
         return scroll
@@ -1166,25 +1247,55 @@ class MainWindow(QMainWindow):
         self.combo_delivery_date = QDateEdit()
         self.combo_delivery_date.setCalendarPopup(True)
         self.combo_delivery_date.setDate(datetime.now().date())
-        self.combo_delivery_date.setEnabled(False)
         self.combo_delivery_date.setMinimumHeight(40)
         
         self.combo_shipping_cost = ui.QLineEdit()
         self.combo_shipping_cost.setPlaceholderText("Costo Envío ($)")
         self.combo_shipping_cost.setText("0.00")
-        self.combo_shipping_cost.setEnabled(False)
         self.combo_shipping_cost.setMinimumHeight(40)
         self.combo_shipping_cost.textChanged.connect(self.update_combo_table_calculations)
         
+        orig_combo_date_mp = self.combo_delivery_date.mousePressEvent
+        orig_combo_ship_mp = self.combo_shipping_cost.mousePressEvent
+        
+        def handle_combo_date_mp(event):
+            if self.combo_type.currentText() == "Física":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "El estimado de entrega no aplica para compras físicas.")
+            else:
+                orig_combo_date_mp(event)
+                
+        def handle_combo_ship_mp(event):
+            if self.combo_type.currentText() == "Física":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "El costo de envío no aplica para compras físicas.")
+            else:
+                orig_combo_ship_mp(event)
+                
+        self.combo_delivery_date.mousePressEvent = handle_combo_date_mp
+        self.combo_shipping_cost.mousePressEvent = handle_combo_ship_mp
+        
         def on_combo_type_changed(text):
             is_online = (text == "En Línea")
-            self.combo_delivery_date.setEnabled(is_online)
-            self.combo_shipping_cost.setEnabled(is_online)
-            if not is_online:
+            if is_online:
+                self.combo_delivery_date.setReadOnly(False)
+                self.combo_delivery_date.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
+                self.combo_delivery_date.setStyleSheet("")
+                self.combo_shipping_cost.setReadOnly(False)
+                self.combo_shipping_cost.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                self.combo_shipping_cost.setStyleSheet("")
+            else:
                 self.combo_delivery_date.setDate(datetime.now().date())
                 self.combo_shipping_cost.setText("0.00")
+                self.combo_delivery_date.setReadOnly(True)
+                self.combo_delivery_date.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.combo_delivery_date.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
+                self.combo_shipping_cost.setReadOnly(True)
+                self.combo_shipping_cost.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.combo_shipping_cost.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
                 
         self.combo_type.currentTextChanged.connect(on_combo_type_changed)
+        on_combo_type_changed(self.combo_type.currentText())
 
         form_trans.addRow("Proveedor:", self.combo_supplier)
         form_trans.addRow("Responsable:", self.combo_responsible)
@@ -1278,7 +1389,8 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
     def combo_create_new_product(self):
-        dialog = NewProductDialog(self)
+        is_equitativa = (self.combo_method.currentText() == "Equitativa")
+        dialog = NewProductDialog(self, combo_equitativo=is_equitativa)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.load_inventory_data()
             new_sku = dialog.sku.text().strip()
@@ -3069,8 +3181,9 @@ class CustomPrintPreviewDialog(QDialog):
 
 
 class NewProductDialog(QDialog):
-    def __init__(self, parent=None, pre_sku="", pre_cost="", pre_price=""):
+    def __init__(self, parent=None, pre_sku="", pre_cost="", pre_price="", combo_equitativo=False):
         super().__init__(parent)
+        self.combo_equitativo = combo_equitativo
         self.setWindowTitle("Añadir Nuevo Producto")
         self.setFixedWidth(400)
         self.setStyleSheet(ui.STYLE_SHEET)
@@ -3131,6 +3244,24 @@ class NewProductDialog(QDialog):
         if self.pre_sku: self.sku.setText(self.pre_sku)
         if self.pre_cost: self.cost.setText(self.pre_cost)
         if self.pre_price: self.price.setText(self.pre_price)
+        
+        if getattr(self, 'combo_equitativo', False):
+            self.cost.setText("0")
+            self.tax_pct.setText("0")
+            self.profit_pct.setText("0")
+            self.price.setText("0")
+            
+            def show_equitativo_msg(event):
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Información", "Campo no disponible por criterio de costo equitativo.")
+                
+            for widget in (self.cost, self.tax_pct, self.profit_pct, self.price):
+                widget.setReadOnly(True)
+                widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                widget.setStyleSheet("background-color: #f1f5f9; color: #94a3b8;")
+                widget.mousePressEvent = show_equitativo_msg
+
+            self.btn_apply_suggested.setEnabled(False)
         
         self.selected_image_path = None
         self.img_path_label.setObjectName("Secondary")

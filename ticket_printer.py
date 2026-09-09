@@ -175,6 +175,7 @@ class TicketPrinter:
                 name, qty, price, amount = item
                 subtotal += amount
                 
+                name = name.strip()
                 name_lines = textwrap.wrap(name, col_name)
                 for i, line in enumerate(name_lines):
                     if i == 0:

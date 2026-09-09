@@ -125,8 +125,8 @@ def test_add_purchase_full_features(db):
     # pos en get_all_products: 5=stock, 6=costo, 7=venta, 9=impuesto
     target = next(p for p in products if p[2] == "SKU-NEW-PURCH")
     assert target[5] == 10       # Stock sumó 10
-    assert target[6] == 15.0     # Costo actualizado
-    assert target[7] == 30.0     # Precio de venta actualizado
+    assert target[6] == 16.5     # Costo actualizado (15.0 base + 10% impuesto)
+    assert target[7] == 30.0     # Precio actualizado
     assert target[9] == 10.0     # Impuesto actualizado
 
 def test_online_purchase_workflow(db):
