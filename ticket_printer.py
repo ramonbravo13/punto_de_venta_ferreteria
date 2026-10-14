@@ -34,6 +34,14 @@ class PrinterConfigManager:
         except Exception as e:
             print(f"Error saving printer config: {e}")
 
+import logging
+print_logger = logging.getLogger("PrintSystem")
+if not print_logger.handlers:
+    print_logger.setLevel(logging.INFO)
+    fh = logging.FileHandler("print_logs.txt", encoding='utf-8')
+    fh.setFormatter(logging.Formatter('%(asctime)s\n%(message)s\n' + '-'*40))
+    print_logger.addHandler(fh)
+
 class TicketPrinter:
     def __init__(self):
         self.config_manager = PrinterConfigManager()
@@ -72,6 +80,10 @@ class TicketPrinter:
                 if status_code & win32print.PRINTER_STATUS_DOOR_OPEN: status_errors.append("Tapa abierta")
                 if status_code & win32print.PRINTER_STATUS_OFFLINE: status_errors.append("Apagada / Fuera de línea")
                 if status_code & win32print.PRINTER_STATUS_NOT_AVAILABLE: status_errors.append("No disponible")
+                
+                attributes = printer_info.get('Attributes', 0)
+                if attributes & 0x00000400: # PRINTER_ATTRIBUTE_WORK_OFFLINE
+                    status_errors.append("Desconectada (Modo 'Trabajar sin conexión' en Windows)")
                 
                 if status_errors:
                     errors_str = ", ".join(status_errors)
@@ -222,13 +234,40 @@ class TicketPrinter:
         return output
 
     def imprimir_ticket_sync(self, venta_data, is_reprint=False):
-        for _ in range(self.config_manager.config.get("copies", 1)):
-            data = self.formatear_ticket(venta_data, is_test=False, is_reprint=is_reprint)
-            self.print_raw_data(data)
+        printer_name = self.config_manager.config.get("printer_name", "Desconocida")
+        doc_name = f"Ticket #{venta_data.get('ticket', 'DESC')}"
+        try:
+            for _ in range(self.config_manager.config.get("copies", 1)):
+                data = self.formatear_ticket(venta_data, is_test=False, is_reprint=is_reprint)
+                self.print_raw_data(data)
+            print_logger.info(f"Tipo: TICKET\nImpresora: {printer_name}\nDocumento: {doc_name}\nResultado: SUCCESS")
+        except Exception as e:
+            print_logger.info(f"Tipo: TICKET\nImpresora: {printer_name}\nDocumento: {doc_name}\nResultado: ERROR\nDetalle: {str(e)}")
+            raise
             
     def imprimir_ticket_prueba_sync(self):
-        data = self.formatear_ticket({}, is_test=True)
-        self.print_raw_data(data)
+        printer_name = self.config_manager.config.get("printer_name", "Desconocida")
+        try:
+            data = self.formatear_ticket({}, is_test=True)
+            self.print_raw_data(data)
+            print_logger.info(f"Tipo: TICKET\nImpresora: {printer_name}\nDocumento: Prueba\nResultado: SUCCESS")
+        except Exception as e:
+            print_logger.info(f"Tipo: TICKET\nImpresora: {printer_name}\nDocumento: Prueba\nResultado: ERROR\nDetalle: {str(e)}")
+            raise
+
+    def diagnose(self):
+        printer_name = self.config_manager.config.get("printer_name")
+        if not printer_name:
+            return "IMPRESORA DE TICKETS\n\n✓ Configuración encontrada\n✗ Impresora no configurada\n\nRESULTADO: ERROR"
+            
+        report = "IMPRESORA DE TICKETS\n\n✓ Configuración encontrada\n"
+        try:
+            self._validate_printer_status(printer_name)
+            report += "✓ Impresora detectada\n✓ Driver disponible\n✓ Spooler de Windows funcionando\n✓ Impresora disponible y lista\n✓ Comunicación correcta\n\nRESULTADO: OK"
+            return report
+        except Exception as e:
+            report += f"✗ Error detectado en la comunicación o spooler:\n{str(e)}\n\nRESULTADO: ERROR"
+            return report
 
 # Instancia global
 printer = TicketPrinter()

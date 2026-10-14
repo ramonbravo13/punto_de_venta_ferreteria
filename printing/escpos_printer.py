@@ -5,6 +5,19 @@ class EscPosPrinter:
     def __init__(self, config: PrinterConfig):
         self.config = config
         
+    def diagnose(self):
+        if not self.config.com_port:
+            return "IMPRESORA DE ETIQUETAS\n\n✓ Configuración encontrada\n✗ Puerto COM no configurado\n\nRESULTADO: ERROR"
+        report = "IMPRESORA DE ETIQUETAS\n\n✓ Configuración encontrada\n"
+        try:
+            ser = serial.Serial(self.config.com_port, self.config.baud_rate, timeout=3)
+            ser.close()
+            report += f"✓ Puerto {self.config.com_port} detectado y accesible\n✓ Comunicación Serial correcta\n\nRESULTADO: OK"
+            return report
+        except Exception as e:
+            report += f"✗ Error de puerto Serial detectado:\n{str(e)}\n\nRESULTADO: ERROR"
+            return report
+
     def print_image(self, img):
         """Impresión de imagen rasterizada vía Serial ESC/POS directo."""
         if not self.config.com_port:

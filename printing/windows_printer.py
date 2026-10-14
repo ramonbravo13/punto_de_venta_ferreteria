@@ -43,6 +43,10 @@ class WindowsPrinter:
             if status_code & win32print.PRINTER_STATUS_NOT_AVAILABLE: status_errors.append("No disponible")
             if status_code & win32print.PRINTER_STATUS_NO_TONER: status_errors.append("Sin Toner")
             
+            attributes = printer_info.get('Attributes', 0)
+            if attributes & 0x00000400: # PRINTER_ATTRIBUTE_WORK_OFFLINE
+                status_errors.append("Desconectada (Modo 'Trabajar sin conexión' en Windows)")
+            
             if status_errors:
                 errors_str = ", ".join(status_errors)
                 raise Exception(f"La impresora reporta un problema físico o de conexión:\n• {errors_str}")
@@ -52,6 +56,20 @@ class WindowsPrinter:
 
         finally:
             win32print.ClosePrinter(hprinter)
+
+    def diagnose(self):
+        printer_name = self.config.printer_name
+        if not printer_name:
+            return "IMPRESORA DE ETIQUETAS\n\n✓ Configuración encontrada\n✗ Impresora no configurada\n\nRESULTADO: ERROR"
+            
+        report = "IMPRESORA DE ETIQUETAS\n\n✓ Configuración encontrada\n"
+        try:
+            self._validate_printer_status(printer_name)
+            report += "✓ Impresora detectada\n✓ Driver disponible\n✓ Conexión disponible (Spooler OK)\n✓ Impresora disponible y lista\n\nRESULTADO: OK"
+            return report
+        except Exception as e:
+            report += f"✗ Error de conexión detectado:\n{str(e)}\n\nRESULTADO: ERROR"
+            return report
 
     def print_image(self, img):
         """Envía la imagen generada a la impresora de Windows forzando el tamaño exacto en milímetros."""

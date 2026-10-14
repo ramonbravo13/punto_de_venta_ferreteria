@@ -180,8 +180,12 @@ new_methods = '''
         self.update_combo_table_calculations()
 
     def add_product_to_combo(self):
-        query = self.combo_product_search.text().strip()
-        if not query: return
+        raw_query = self.combo_product_search.text().strip()
+        if not raw_query: return
+        query = raw_query.split(" | ")[0].strip() if " | " in raw_query else raw_query
+        if not query and " | " in raw_query:
+            parts = raw_query.split(" | ")
+            query = parts[1].strip() if len(parts) > 1 else raw_query
         p = self.db.get_product_by_sku_or_name(query)
         if p:
             self.combo_items.append((p[0], p[4], p[1]))

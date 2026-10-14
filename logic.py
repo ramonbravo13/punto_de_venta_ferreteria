@@ -157,15 +157,15 @@ class MplCanvas(FigureCanvas):
         self.figure.tight_layout()
         self.draw()
 
-    def plot_financial_comparison(self, investment, sales):
-        """Gráfica de barras comparativa de salud financiera."""
+    def plot_income_vs_expenses(self, income, expenses):
+        """Gráfica de barras comparativa de Ingresos vs Egresos."""
         self.axes.clear()
-        labels = ['Inversión', 'Ventas']
-        values = [investment, sales]
-        colors = ['#F59E0B', '#0EA5E9']
+        labels = ['Ingresos (Ventas)', 'Egresos (Compras + Gastos)']
+        values = [income, expenses]
+        colors = ['#10B981', '#EF4444'] # Verde para ingresos, Rojo para egresos
         
         bars = self.axes.bar(labels, values, color=colors)
-        self.axes.set_title("Salud Financiera (Total)", color='#F8FAFC', pad=15)
+        self.axes.set_title("Balance General (Ingresos vs Egresos)", color='#F8FAFC', pad=15)
         self.axes.tick_params(axis='y', colors='#94A3B8')
         self.axes.tick_params(axis='x', colors='#F8FAFC')
         
@@ -176,7 +176,7 @@ class MplCanvas(FigureCanvas):
                 xy=(bar.get_x() + bar.get_width() / 2, height),
                 xytext=(0, 3), # 3 points vertical offset
                 textcoords="offset points",
-                ha='center', va='bottom', color='#F8FAFC', fontsize=9)
+                ha='center', va='bottom', color='#F8FAFC', fontsize=9, fontweight='bold')
         
         for spine in self.axes.spines.values():
             spine.set_color('#334155')

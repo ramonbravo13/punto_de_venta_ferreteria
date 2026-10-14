@@ -43,3 +43,14 @@ Thumbs.db
 
 # Reportes y archivos Excel generados
 *.xlsx
+
+# Archivos de respaldo y temporales
+*.bak
+*.log
+old_*.py
+diff.txt
+funcs.txt
+print_logs.txt
+remove_lines.py
+test_db.py
+test_db2.py
